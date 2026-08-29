@@ -1,0 +1,11 @@
+{
+  "bot_token": "8825590403:AAEON41izqAevVFves3P-_jf_2ZY_6Si55o",
+  "channel_id": "-1004352282583",
+  "refresh_minutes": 15,
+  "watchlist": ["PYTH", "RE"],
+  "announce_new": true,
+  "post_on_update_only": true,
+  "auto_remove_ended": true,
+  "track_all_running": true,
+  "campaigns_cache_minutes": 30
+}

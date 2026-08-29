@@ -1,0 +1,32 @@
+{
+  "ts": 1787978474,
+  "campaigns": [
+    {
+      "code": "spot-altcoin-festival-wave-BMT1",
+      "token": "BNB",
+      "title": "BMT Trading Tournament",
+      "prize": "400 BNB",
+      "ends_ms": 1788429600000,
+      "status": "PUBLISHED",
+      "source": "colosseum"
+    },
+    {
+      "code": "spot-altcoin-festival-wave-ENSO1",
+      "token": "BNB",
+      "title": "ENSO Trading Tournament",
+      "prize": "400 BNB",
+      "ends_ms": 1788516000000,
+      "status": "PUBLISHED",
+      "source": "colosseum"
+    },
+    {
+      "code": "spot-trading-festival-wave-r3",
+      "token": "USDC",
+      "title": "Spot Trading Tournament Season 3",
+      "prize": "500,000 USDC",
+      "ends_ms": 1788854400000,
+      "status": "PUBLISHED",
+      "source": "colosseum"
+    }
+  ]
+}

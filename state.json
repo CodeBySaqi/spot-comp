@@ -1,0 +1,65 @@
+{
+  "excluded_codes": [],
+  "code_cache": {
+    "bmt": {
+      "code": "spot-altcoin-festival-wave-bmt1",
+      "ts": 1787983141
+    },
+    "enso": {
+      "code": "spot-altcoin-festival-wave-enso1",
+      "ts": 1787983154
+    },
+    "spot-trading-festival-wave-r3": {
+      "code": "spot-trading-festival-wave-r3",
+      "ts": 1787983163
+    }
+  },
+  "volfp:spot-altcoin-festival-wave-bmt1": "u:7453|v:125628152.86|tu:6453|tv:3603823.39|r1:26069385.81|r1000:1339.63|top:1:26069385.81,2:20441892.25,3:17533257.54,4:9810208.53,5:4531716.05",
+  "last_post:spot-altcoin-festival-wave-bmt1": 1787981406,
+  "volfp:spot-altcoin-festival-wave-enso1": "u:2987|v:16006694.16|tu:1987|tv:1012990.93|r1:2862780.04|r1000:537.58|top:1:2862780.04,2:1149785.67,3:632850.53,4:440947.13,5:337992.52",
+  "seen_campaigns": [
+    "spot-altcoin-festival-wave-bmt1",
+    "spot-altcoin-festival-wave-enso1",
+    "spot-trading-festival-wave-r3"
+  ],
+  "announced_campaigns": [
+    "spot-altcoin-festival-wave-bmt1",
+    "spot-altcoin-festival-wave-enso1",
+    "spot-trading-festival-wave-r3"
+  ],
+  "campaigns_cache": {
+    "ts": 1787982691,
+    "campaigns": [
+      {
+        "code": "spot-altcoin-festival-wave-BMT1",
+        "token": "BNB",
+        "title": "BMT Trading Tournament",
+        "prize": "400 BNB",
+        "ends_ms": 1788429600000,
+        "status": "PUBLISHED",
+        "source": "colosseum"
+      },
+      {
+        "code": "spot-altcoin-festival-wave-ENSO1",
+        "token": "BNB",
+        "title": "ENSO Trading Tournament",
+        "prize": "400 BNB",
+        "ends_ms": 1788516000000,
+        "status": "PUBLISHED",
+        "source": "colosseum"
+      },
+      {
+        "code": "spot-trading-festival-wave-r3",
+        "token": "USDC",
+        "title": "Spot Trading Tournament Season 3",
+        "prize": "500,000 USDC",
+        "ends_ms": 1788854400000,
+        "status": "PUBLISHED",
+        "source": "colosseum"
+      }
+    ]
+  },
+  "volfp:spot-trading-festival-wave-r3": "u:12340|v:527934954.67|tu:11340|tv:7092879.61|r1:143529401.69|r1000:3019.26|top:1:143529401.69,2:79736747.38,3:78502674.18,4:62006235.88,5:35344284.85",
+  "last_post:spot-altcoin-festival-wave-enso1": 1787981407,
+  "last_post:spot-trading-festival-wave-r3": 1787981407
+}
