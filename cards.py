@@ -13,6 +13,7 @@ Replicates the "Rank 1001+ proportional share" card:
 
 import html as _html
 import json
+import math
 import re
 import time
 
@@ -74,39 +75,130 @@ def get_tier_for_rank(pl, rank):
     return None
 
 
-def compute(api, group, activities):
-    """Gather all live stats for the MAIN activity and compute the estimator."""
-    act = pick_main_activity(activities)
-    if act is None:
-        return None
+# ------------------------------------------------------------------ tracks
+#: A "track" is one main competition inside a group. Multi-track campaigns
+#: (e.g. Traders League 4) contain Spot / bStock / TradFi / Futures tracks,
+#: each with its own reward structure and ranking metric.
+def metric_label(act):
+    """Ranking metric label for a track (volume / AUM / eligible volume)."""
+    t = (((act.get("i18nContent") or {}).get("title")) or "").lower()
+    if "bstock" in t or "aum" in t:
+        return "AUM"
+    if "futures" in t:
+        return "eligible volume"
+    return "volume"
 
+
+def _tier_shape(pl):
+    """Classify a prize-tier list → (shape, tail_start, pool, top_n).
+
+    - "tail" : open-ended last tier (rank N+ proportional share)
+    - "topN" : a single fixed tier 1..N (top-N proportional split)
+    - "fixed": fixed tiers only (sprints / side tasks)
+    """
+    tail = next((t for t in pl if t.get("end") is None), None)
+    if tail:
+        return "tail", tail.get("start"), tail.get("fixedAmount"), None
+    if len(pl) == 1:
+        t = pl[0]
+        return "topN", None, t.get("fixedAmount"), t.get("end")
+    return "fixed", None, None, None
+
+
+def resolve_title_key(key, i18n):
+    """Resolve an i18n key to text; clean up known title junk."""
+    t = (i18n or {}).get(key, key)
+    t = re.sub(r"\s*-\s*", " — ", t)   # "Futures Competition- Round 1"
+    return t
+
+
+def identify_tracks(activities):
+    """Return the main competition activities (exclude sprints & side tasks)."""
+    tracks = []
+    for a in activities:
+        if a.get("status") != "PUBLISHED":
+            continue
+        gc = a.get("globalContent", {}) or {}
+        rs = gc.get("rankingSetting", {}) or {}
+        pl = rs.get("rankingPrizeList") or []
+        if not pl:
+            continue
+        rp = gc.get("rewardPoolSetting", {}) or {}
+        pool = (rp.get("rewardAmountList") or [{}])[0].get("amount") or 0
+        title = ((a.get("i18nContent") or {}).get("title") or "").lower()
+        if "sprint" in title:
+            continue
+        if "leaderboard" in title:
+            continue
+        if pool and pool <= 1:
+            continue
+        shape, _, _, _ = _tier_shape(pl)
+        if shape in ("tail", "topN"):
+            tracks.append(a)
+    return tracks
+
+
+def pick_primary_track(activities):
+    """Pick the single best track for /spotcomp (prefer spot, then any tail)."""
+    tracks = identify_tracks(activities)
+    if not tracks:
+        return None
+    for a in tracks:
+        title = ((a.get("i18nContent") or {}).get("title") or "").lower()
+        if "spot" in title:
+            return a
+    for a in tracks:
+        shape, _, _, _ = _tier_shape(
+            (a.get("globalContent", {}).get("rankingSetting", {}) or {}).get("rankingPrizeList") or [])
+        if shape == "tail":
+            return a
+    return tracks[0]
+
+
+def _metric_of(r):
+    """A leaderboard row's ranking metric (grade: AUM / eligible volume / volume)."""
+    g = r.get("grade")
+    if g is not None:
+        return float(g)
+    return float(r.get("tradingVolume") or 0)
+
+
+def _pairs_of(act):
+    gc = act.get("globalContent", {}) or {}
+    for key in ("includeSpotTradingPairList", "includeTradingPairList",
+                "includeFuturesUmTradingPairList", "includeFuturesCmTradingPairList",
+                "includeBstockTradingPairList"):
+        v = gc.get(key)
+        if v:
+            return v
+    return []
+
+
+def compute_track(api, group, act):
+    """Compute estimator stats for ONE track (any shape: tail or top-N)."""
     gc = act.get("globalContent", {}) or {}
     rs = gc.get("rankingSetting", {}) or {}
     rp = gc.get("rewardPoolSetting", {}) or {}
     unit = (rp.get("unit") or "TOKEN").upper()
     pl = rs.get("rankingPrizeList") or []
-    tail_tier = get_tail_tier(act)
-    top1000_tier = get_tier_for_rank(pl, TOP1000_CUTOFF)
-    # If the tier covering rank 1000 is itself the open-ended tail, there is
-    # no separate "top 1000" tier (rare structure) — treat it as none.
-    if top1000_tier and top1000_tier.get("end") is None:
-        top1000_tier = None
+    shape, tail_start, tail_pool, top_n = _tier_shape(pl)
+    metric = metric_label(act)
 
-    tail_pool = tail_tier.get("fixedAmount") if tail_tier else None
-    top1000_pool = top1000_tier.get("fixedAmount") if top1000_tier else None
-    if top1000_tier:
-        top1000_span = ((top1000_tier.get("end") or TOP1000_CUTOFF)
-                        - (top1000_tier.get("start") or 1) + 1)
+    # how many leaderboard rows do we need?
+    if shape == "tail":
+        need = tail_start - 1          # sum everything strictly below the tail
+    elif shape == "topN":
+        need = top_n
     else:
-        top1000_span = 1
-    top1000_per_user = (top1000_pool / top1000_span) if top1000_pool else None
+        return None
+    pages = max(1, min(15, math.ceil(need / 100)))
 
-    # leaderboard pages 1..10 (100 rows each) to cover ranks 1..1000
     rows = []
     eligible_users = None
     eligible_vol = None
     updated = None
-    for page in range(1, 11):
+    total = None
+    for page in range(1, pages + 1):
         lb = api.leaderboard_page(act["id"], page_index=page, page_size=100)
         if not lb:
             break
@@ -120,52 +212,125 @@ def compute(api, group, activities):
             break
         time.sleep(0.15)
 
-    sum_top1000 = sum((r.get("tradingVolume") or r.get("grade") or 0)
-                      for r in rows
-                      if (r.get("sequence") or 10**9) <= TOP1000_CUTOFF)
-    rank1000_row = next((r for r in rows if (r.get("sequence") or 0) == TOP1000_CUTOFF), None)
-    rank1_row = next((r for r in rows if (r.get("sequence") or 0) == 1), None)
-
-    tail_users = max(0, (eligible_users or 0) - TOP1000_CUTOFF)
-    tail_vol = max(0.0, (eligible_vol or 0) - sum_top1000)
-
     price = api.token_price(unit)
+    top_rows = sorted([r for r in rows if (r.get("sequence") or 0) <= 5],
+                      key=lambda r: r.get("sequence") or 0)[:5]
 
-    # --- CAP DETECTION ---
-    # Only use cap if explicitly found in rules text; no fallback to
-    # equal_split (that would make everything look "CAPPED").
-    cap, cap_unit = _extract_cap(group, act, unit)
-    cap_unit = cap_unit or unit
+    if shape == "tail":
+        # AUM-based tracks (bStock): `eligibleTradingVolume` is NOT the AUM
+        # total (it's raw volume), so we cannot reconstruct the tail AUM from
+        # the paged rows. Show the rule + cap + cutoff instead of a numeric rate.
+        if metric == "AUM":
+            cutoff_seq = tail_start - 1
+            cutoff_row = next((r for r in rows if (r.get("sequence") or 0) == cutoff_seq), None)
+            cap, cap_unit = _extract_cap(group, act, unit)
+            cap_unit = cap_unit or unit
+            return {
+                "group": group, "activity": act, "unit": unit, "price": price,
+                "shape": shape, "metric": metric,
+                "pool": (rp.get("rewardAmountList") or [{}])[0].get("amount"),
+                "tail_pool": tail_pool, "tail_start": tail_start, "top_n": None,
+                "cap": cap, "cap_unit": cap_unit, "prev_per_user": None,
+                "aum_based": True,
+                "eligible_users": eligible_users, "eligible_vol": None,
+                "tail_users": max(0, (eligible_users or 0) - cutoff_seq),
+                "tail_vol": None,
+                "rank1000_vol": _metric_of(cutoff_row) if cutoff_row else None,
+                "rank1_vol": _metric_of(top_rows[0]) if top_rows else None,
+                "top_rows": top_rows, "updated": updated,
+                "ends": act.get("unpublishedTime") or act.get("taskExpiredTime"),
+                "status": group.get("status"),
+                "ended": group.get("status") == "UNPUBLISHED",
+                "rate_per_1000": None, "equal_split": None,
+                "qualify": gc.get("leaderboardQualifyThresholds"),
+                "pairs": _pairs_of(act),
+            }
 
-    rate_per_1000 = (tail_pool / tail_vol * 1000) if (tail_pool and tail_vol) else 0
-    equal_split = (tail_pool / tail_users) if (tail_pool and tail_users) else 0
+        top_metric = sum(_metric_of(r) for r in rows
+                         if (r.get("sequence") or 10**9) < tail_start)
+        cutoff_seq = tail_start - 1
+        cutoff_row = next((r for r in rows if (r.get("sequence") or 0) == cutoff_seq), None)
+        tail_metric = max(0.0, (eligible_vol or 0) - top_metric)
+        tail_users = max(0, (eligible_users or 0) - cutoff_seq)
+        rate = (tail_pool / tail_metric * 1000) if (tail_pool and tail_metric) else 0
+        equal_split = (tail_pool / tail_users) if (tail_pool and tail_users) else 0
+        # per-user reward of the tier just above the tail (equal split)
+        prev_per_user = None
+        for t in pl:
+            if t.get("end") == cutoff_seq and t.get("fixedAmount"):
+                span = cutoff_seq - (t.get("start") or 1) + 1
+                prev_per_user = t["fixedAmount"] / span
+                break
+        cap, cap_unit = _extract_cap(group, act, unit)
+        cap_unit = cap_unit or unit
+        cutoff_vol = _metric_of(cutoff_row) if cutoff_row else None
+    elif shape == "topN":
+        top_metric = sum(_metric_of(r) for r in rows
+                         if (r.get("sequence") or 10**9) <= top_n)
+        cutoff_row = next((r for r in rows if (r.get("sequence") or 0) == top_n), None)
+        tail_metric = top_metric
+        tail_users = top_n
+        rate = (tail_pool / top_metric * 1000) if (tail_pool and top_metric) else 0
+        equal_split = (tail_pool / top_n) if (tail_pool and top_n) else 0
+        prev_per_user = None
+        cap, cap_unit = None, unit     # top-N splits usually have no per-user cap
+        cutoff_vol = _metric_of(cutoff_row) if cutoff_row else None
+        tail_start = None
+    else:
+        return None
 
     return {
         "group": group,
         "activity": act,
-        "activities": activities,
         "unit": unit,
         "price": price,
+        "shape": shape,
+        "metric": metric,
+        "pool": (rp.get("rewardAmountList") or [{}])[0].get("amount"),
         "tail_pool": tail_pool,
+        "tail_start": tail_start,
+        "top_n": top_n,
         "cap": cap,
         "cap_unit": cap_unit,
-        "top1000_per_user": top1000_per_user,
+        "prev_per_user": prev_per_user,
         "eligible_users": eligible_users,
         "eligible_vol": eligible_vol,
         "tail_users": tail_users,
-        "tail_vol": tail_vol,
-        "rank1000_vol": (rank1000_row.get("tradingVolume") or rank1000_row.get("grade")) if rank1000_row else None,
-        "rank1_vol": (rank1_row.get("tradingVolume") or rank1_row.get("grade")) if rank1_row else None,
-        "top_rows": [r for r in rows if (r.get("sequence") or 0) <= 5][:5],
+        "tail_vol": tail_metric,
+        "rank1000_vol": cutoff_vol,
+        "rank1_vol": _metric_of(top_rows[0]) if top_rows else None,
+        "top_rows": top_rows,
         "updated": updated,
         "ends": act.get("unpublishedTime") or act.get("taskExpiredTime"),
         "status": group.get("status"),
         "ended": group.get("status") == "UNPUBLISHED",
-        "rate_per_1000": rate_per_1000,
+        "rate_per_1000": rate,
         "equal_split": equal_split,
         "qualify": gc.get("leaderboardQualifyThresholds"),
-        "pairs": gc.get("includeSpotTradingPairList") or gc.get("includeTradingPairList") or [],
+        "pairs": _pairs_of(act),
     }
+
+
+def compute(api, group, activities):
+    """Gather stats for the primary track (backward-compatible wrapper)."""
+    act = pick_primary_track(activities)
+    if act is None:
+        return None
+    stats = compute_track(api, group, act)
+    if stats:
+        stats["activities"] = activities
+        stats["group"] = group
+    return stats
+
+
+def compute_all_tracks(api, group, activities):
+    """Compute stats for EVERY main track in a group → list of stats dicts."""
+    out = []
+    for act in identify_tracks(activities):
+        stats = compute_track(api, group, act)
+        if stats:
+            out.append(stats)
+    return out
 
 
 def group_rule_text_for(group):
@@ -289,100 +454,138 @@ def _fmt_ts(ms):
     return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ms / 1000))
 
 
+def track_title(act):
+    """Human-readable title for one track (resolves the i18n key)."""
+    t = resolve_title_key(((act.get("i18nContent") or {}).get("title") or ""),
+                          load_i18n())
+    t = re.sub(r"(Round)(\d)", r"\1 \2", t)   # "Round1" → "Round 1"
+    t = re.sub(r"\s*-\s*", " — ", t)
+    t = re.sub(r"\s+", " ", t).strip()
+    if not t or is_i18n_key(t):
+        return None
+    return t
+
+
 def build_card(stats):
-    """Build the Telegram (HTML) card."""
+    """Build the Telegram (HTML) card (works for tail + top-N track shapes)."""
     L = []
     unit = stats["unit"]
     price = stats["price"]
-    tail_pool = stats["tail_pool"]
+    tail_pool = stats.get("tail_pool")
+    shape = stats.get("shape", "tail")
+    metric = stats.get("metric", "volume")
+    top_n = stats.get("top_n")
+    tail_start = stats.get("tail_start")
 
     L.append(f"📐 <b>{esc(title_for(stats))}</b>")
-    pairs = " · ".join(stats["pairs"]) if stats["pairs"] else ""
-    main_pool = None
-    for a in stats["activities"]:
-        if a.get("id") == stats["activity"]["id"]:
-            al = (a.get("globalContent", {}).get("rewardPoolSetting", {}) or {}).get("rewardAmountList") or []
-            if al:
-                main_pool = al[0].get("amount")
-    if main_pool is not None and tail_pool is not None:
-        L.append(f"Main pool {esc(fmt_num(main_pool,0))} {unit} · tail pool {esc(fmt_num(tail_pool,0))} {unit}")
+    tt = track_title(stats.get("activity")) if stats.get("activity") else None
+    if tt and tt.lower() != title_for(stats).lower():
+        L.append(f"🎯 <b>{esc(tt)}</b>")
+
+    # pool line
+    pool = stats.get("pool")
+    if shape == "topN" and top_n:
+        if pool is not None:
+            L.append(f"Prize pool {esc(fmt_num(pool, 0))} {unit} — top {top_n} proportional split")
+    elif pool is not None:
+        tail_txt = f" · tail pool {esc(fmt_num(tail_pool, 0))} {unit}" if tail_pool else ""
+        L.append(f"Prize pool {esc(fmt_num(pool, 0))} {unit}{tail_txt}")
+    pairs = " · ".join(stats.get("pairs") or [])
     if pairs:
-        L.append(f"Pairs: <code>{esc(pairs)}</code>")
+        L.append(f"Pairs: <code>{esc(pairs[:400])}</code>")
 
     # --- top ranks ---
-    rows = stats["top_rows"]
+    rows = stats.get("top_rows") or []
     if rows:
         L.append("")
         L.append("🏆 <b>Top ranks</b>")
         medals = {1: "🥇", 2: "🥈", 3: "🥉"}
-        lines = []
         for r in rows:
             seq = r.get("sequence") or 0
             name = (r.get("nickName") or "—")
-            vol = r.get("tradingVolume") or r.get("grade") or 0
+            val = _metric_of(r)
             medal = medals.get(seq, f"#{seq}")
-            lines.append(f"{medal} {esc(name)} — <code>{fmt_usd(vol)}</code>")
-        L.extend(lines)
-        if stats["rank1000_vol"] is not None:
-            L.append(f"🎯 #1000 (cutoff) — <code>{fmt_usd(stats['rank1000_vol'])}</code>")
+            L.append(f"{medal} {esc(name)} — <code>{fmt_usd(val)}</code>")
+        if stats.get("rank1000_vol") is not None:
+            if shape == "topN":
+                L.append(f"🎯 #{top_n} (cutoff) — <code>{fmt_usd(stats['rank1000_vol'])}</code>")
+            else:
+                L.append(f"🎯 #{tail_start - 1} (cutoff) — <code>{fmt_usd(stats['rank1000_vol'])}</code>")
 
     # --- totals ---
     L.append("")
-    if stats["eligible_users"] is not None:
-        L.append(f"👥 <b>All eligible:</b> {stats['eligible_users']:,} users · "
-                 f"<code>{fmt_usd(stats['eligible_vol'] or 0)}</code> total volume")
+    if stats.get("eligible_users") is not None:
+        if stats.get("aum_based"):
+            L.append(f"👥 <b>All eligible:</b> {stats['eligible_users']:,} users")
+        else:
+            L.append(f"👥 <b>All eligible:</b> {stats['eligible_users']:,} users · "
+                     f"<code>{fmt_usd(stats.get('eligible_vol') or 0)}</code> total {metric}")
 
-    # --- tail ---
-    L.append("")
-    L.append(f"📉 <b>Tail (rank 1001+):</b> {stats['tail_users']:,} users · "
-             f"<code>{fmt_usd(stats['tail_vol'])}</code> total volume")
+    rate = stats.get("rate_per_1000")
 
-    # --- rate / rule / examples ---
-    if tail_pool is not None:
-        rate = stats["rate_per_1000"]
+    if shape == "topN":
+        # --- top-N proportional structure ---
+        L.append("")
+        L.append(f"📉 <b>Top {top_n}:</b> proportional split · "
+                 f"<code>{fmt_usd(stats.get('tail_vol'))}</code> combined {metric}")
         if rate:
             usd = f" (~{fmt_usd(rate * (price or 0))})" if price else ""
-            L.append(f"📈 <b>Rate:</b> <code>{fmt_fixed(rate)} {unit}</code>{esc(usd)} per $1,000 volume")
-
-        # Only show "max X" if a real cap was found in the rules
-        if stats["cap"]:
-            cap_txt = f", max <code>{fmt_fixed(stats['cap'], 4)} {esc(stats['cap_unit'] or unit)}</code>"
-        else:
-            cap_txt = ""
-        L.append(f"🧮 <b>Rule:</b> (your volume ÷ tail volume) × "
-                 f"<code>{fmt_num(tail_pool, 0)} {unit}</code>{cap_txt}")
-
-        ex_vols = stats.get("example_volumes") or (60000, 30000, 10000, 5000, 1000)
-        if stats["equal_split"]:
-            L.append("")
-            L.append("🎁 <b>Volume → reward</b> (× vs old equal split)")
-            for v in ex_vols:
-                if stats["tail_vol"]:
-                    raw_rw = v / stats["tail_vol"] * tail_pool
-                    rw = min(raw_rw, stats["cap"]) if stats["cap"] else raw_rw
-                else:
-                    rw = 0
-                    raw_rw = 0
-                mult = rw / stats["equal_split"] if stats["equal_split"] else 0
-                capped = " · CAPPED" if stats["cap"] and rw >= stats["cap"] - 1e-9 else ""
-                usd = f" (~{fmt_usd(rw * (price or 0))})" if price else ""
-                L.append(f"<code>${v:,} → {fmt_fixed(rw, 4)} {unit}{esc(usd)} · {mult:.2f}×{capped}</code>")
+            L.append(f"📈 <b>Rate:</b> <code>{fmt_fixed(rate)} {unit}</code>{esc(usd)} per $1,000 {metric}")
+        if tail_pool:
+            L.append(f"🧮 <b>Rule:</b> (your {metric} ÷ top-{top_n} {metric}) × "
+                     f"<code>{fmt_num(tail_pool, 0)} {unit}</code>")
     else:
-        L.append("ℹ️ <i>No proportional tail tier for this competition.</i>")
+        # --- tail (rank N+) structure ---
+        L.append("")
+        if stats.get("aum_based"):
+            L.append(f"📉 <b>Tail (rank {tail_start}+):</b> {stats.get('tail_users', 0):,} users · "
+                     f"proportional by <b>Effective Net AUM</b>")
+        else:
+            L.append(f"📉 <b>Tail (rank {tail_start}+):</b> {stats.get('tail_users', 0):,} users · "
+                     f"<code>{fmt_usd(stats.get('tail_vol') or 0)}</code> total {metric}")
+        if rate:
+            usd = f" (~{fmt_usd(rate * (price or 0))})" if price else ""
+            L.append(f"📈 <b>Rate:</b> <code>{fmt_fixed(rate)} {unit}</code>{esc(usd)} per $1,000 {metric}")
+        if tail_pool is not None:
+            cap_txt = ""
+            if stats.get("cap"):
+                cap_txt = f", max <code>{fmt_fixed(stats['cap'], 4)} {esc(stats['cap_unit'] or unit)}</code>"
+            L.append(f"🧮 <b>Rule:</b> (your {metric} ÷ tail {metric}) × "
+                     f"<code>{fmt_num(tail_pool, 0)} {unit}</code>{cap_txt}")
 
-    if stats["top1000_per_user"] is not None:
-        usd = f" (~{fmt_usd(stats['top1000_per_user'] * (price or 0))})" if price else ""
-        L.append(f"ℹ️ Top-1000 tier pays <code>{fmt_fixed(stats['top1000_per_user'], 4)} {unit}</code>{esc(usd)} "
-                 f"each — a different tier, not this one.")
+    # --- examples ---
+    if tail_pool is not None and stats.get("equal_split") and not stats.get("aum_based"):
+        ex_vols = stats.get("example_volumes") or (60000, 30000, 10000, 5000, 1000)
+        L.append("")
+        if shape == "topN":
+            L.append(f"🎁 <b>{metric} → reward</b> (× vs equal split of top-{top_n})")
+        else:
+            L.append(f"🎁 <b>{metric} → reward</b> (× vs old equal split)")
+        for v in ex_vols:
+            if stats.get("tail_vol"):
+                raw_rw = v / stats["tail_vol"] * tail_pool
+                rw = min(raw_rw, stats["cap"]) if stats.get("cap") else raw_rw
+            else:
+                rw = 0
+            mult = rw / stats["equal_split"] if stats["equal_split"] else 0
+            capped = " · CAPPED" if stats.get("cap") and rw >= stats["cap"] - 1e-9 else ""
+            usd = f" (~{fmt_usd(rw * (price or 0))})" if price else ""
+            L.append(f"<code>${v:,} → {fmt_fixed(rw, 4)} {unit}{esc(usd)} · {mult:.2f}×{capped}</code>")
+
+    if stats.get("prev_per_user"):
+        usd = f" (~{fmt_usd(stats['prev_per_user'] * (price or 0))})" if price else ""
+        L.append(f"ℹ️ The tier just above (rank {tail_start - 1} and up) pays "
+                 f"<code>{fmt_fixed(stats['prev_per_user'], 4)} {unit}</code>{esc(usd)} each "
+                 f"— a different tier, not this one.")
 
     if stats.get("ended"):
         L.append("🏁 <i>This competition has ended — showing the final leaderboard.</i>")
     else:
-        L.append("⚠️ <i>Live estimate — tail volume keeps growing, so your share shrinks unless you keep trading.</i>")
+        L.append(f"⚠️ <i>Live estimate — the {metric} keeps growing, so your share shrinks unless you keep trading.</i>")
 
     L.append("")
-    L.append(f"🕒 Updated: {esc(_fmt_ts(stats['updated']))} · ⏳ Ends: {esc(_fmt_ts(stats['ends']))}")
-    code = stats["group"].get("code") or ""
+    L.append(f"🕒 Updated: {esc(_fmt_ts(stats.get('updated')))} · ⏳ Ends: {esc(_fmt_ts(stats.get('ends')))}")
+    code = stats.get("group", {}).get("code") or ""
     if code:
         L.append(f"🔗 binance.com/en/activity/trading-competition/{esc(code)}")
 
@@ -393,11 +596,40 @@ def build_summary_line(stats):
     """One-line summary used by /comps."""
     unit = stats["unit"]
     rate = stats["rate_per_1000"]
-    tail = f"{stats['tail_users']:,}u · {fmt_usd(stats['tail_vol'])}"
+    shape = stats.get("shape", "tail")
+    if shape == "topN":
+        tail = f"top {stats.get('top_n')} · {fmt_usd(stats['tail_vol'])}"
+    else:
+        tail = f"{stats['tail_users']:,}u · {fmt_usd(stats['tail_vol'])}"
     rate_txt = f"{fmt_num(rate)} {unit}/$1k" if rate else "—"
     ends = _fmt_ts(stats["ends"])
     state = "🏁 ended" if stats.get("ended") else f"ends {ends}"
-    return (f"<b>{esc(title_for(stats))}</b> — tail {tail} · {rate_txt} · {state}")
+    return (f"<b>{esc(title_for(stats))}</b> — {tail} · {rate_txt} · {state}")
+
+
+def build_tracks_message(stats_list):
+    """One-line summary of every track in a multi-track campaign."""
+    if not stats_list:
+        return "No competition tracks found."
+    group_title = title_for(stats_list[0])
+    lines = [f"🎯 <b>{esc(group_title)}</b> — {len(stats_list)} track(s):", ""]
+    medals = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    for i, s in enumerate(stats_list):
+        num = medals[i] if i < len(medals) else f"{i + 1}."
+        tt = track_title(s.get("activity")) or "Track"
+        unit = s["unit"]
+        pool = s.get("pool")
+        shape = s.get("shape", "tail")
+        if shape == "topN":
+            structure = f"top {s.get('top_n')} split"
+        else:
+            structure = f"rank {s.get('tail_start')}+ split"
+        cap = f", cap {fmt_fixed(s['cap'], 4)} {s['cap_unit']}" if s.get("cap") else ", no cap"
+        rate = s.get("rate_per_1000")
+        rate_txt = f" · {fmt_num(rate)} {unit}/$1k" if rate else ""
+        lines.append(f"{num} <b>{esc(tt)}</b> — {esc(fmt_num(pool, 0) if pool else '?')} {unit} "
+                     f"({structure}{cap}){rate_txt}")
+    return "\n".join(lines)
 
 
 def volume_fingerprint(stats, dp=2):

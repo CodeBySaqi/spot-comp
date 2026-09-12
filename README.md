@@ -120,6 +120,7 @@ python bot.py --cli            # whole watchlist
 |---------|--------|
 | `/spotcomp XPL` | Full estimator card for a token or competition code |
 | `/spotcomp spot-altcoin-festival-wave-pyth1` | …or by exact code |
+| `/tracks CODE` | All tracks of a multi-track campaign (Spot / bStock / TradFi / Futures) |
 | `/campaigns` | List **all running spot campaigns** (prize, end time, link) |
 | `/campaigns TOKEN` | One campaign's card (same as `/spotcomp TOKEN`) |
 | `/comps` | One-line status of all tracked competitions |
