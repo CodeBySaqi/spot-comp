@@ -323,14 +323,48 @@ def compute(api, group, activities):
     return stats
 
 
+def _is_futures_track(act):
+    t = (((act.get("i18nContent") or {}).get("title")) or "").lower()
+    return "futures" in t
+
+
+def group_tracks(raw_tracks):
+    """Merge the futures sub-tracks (All Futures + Altcoin Futures) into ONE
+    'Futures Competition' entry; other tracks stay single. Order preserved."""
+    groups = []
+    futures = []
+    for t in raw_tracks:
+        if _is_futures_track(t):
+            futures.append(t)
+        else:
+            groups.append({"kind": "single", "title": None, "tracks": [t]})
+    if futures:
+        groups.append({"kind": "multi", "title": "Futures Competition", "tracks": futures})
+    return groups
+
+
 def compute_all_tracks(api, group, activities):
-    """Compute stats for EVERY main track in a group → list of stats dicts."""
-    out = []
-    for act in identify_tracks(activities):
-        stats = compute_track(api, group, act)
-        if stats:
-            out.append(stats)
-    return out
+    """Compute stats for every main track → list of entries.
+
+    Each entry is {"kind": "single", "stats": {...}} or
+    {"kind": "multi", "title": "...", "stats_list": [...]} (futures).
+    """
+    raw = identify_tracks(activities)
+    entries = []
+    for grp in group_tracks(raw):
+        if grp["kind"] == "single":
+            s = compute_track(api, group, grp["tracks"][0])
+            if s:
+                entries.append({"kind": "single", "stats": s})
+        else:
+            subs = []
+            for act in grp["tracks"]:
+                s = compute_track(api, group, act)
+                if s:
+                    subs.append(s)
+            if subs:
+                entries.append({"kind": "multi", "title": grp["title"], "stats_list": subs})
+    return entries
 
 
 def group_rule_text_for(group):
@@ -466,8 +500,8 @@ def track_title(act):
     return t
 
 
-def build_card(stats):
-    """Build the Telegram (HTML) card (works for tail + top-N track shapes)."""
+def _card_body(stats):
+    """Card body below the 📐/🎯 header and above the footer."""
     L = []
     unit = stats["unit"]
     price = stats["price"]
@@ -476,11 +510,6 @@ def build_card(stats):
     metric = stats.get("metric", "volume")
     top_n = stats.get("top_n")
     tail_start = stats.get("tail_start")
-
-    L.append(f"📐 <b>{esc(title_for(stats))}</b>")
-    tt = track_title(stats.get("activity")) if stats.get("activity") else None
-    if tt and tt.lower() != title_for(stats).lower():
-        L.append(f"🎯 <b>{esc(tt)}</b>")
 
     # pool line
     pool = stats.get("pool")
@@ -583,12 +612,42 @@ def build_card(stats):
     else:
         L.append(f"⚠️ <i>Live estimate — the {metric} keeps growing, so your share shrinks unless you keep trading.</i>")
 
-    L.append("")
-    L.append(f"🕒 Updated: {esc(_fmt_ts(stats.get('updated')))} · ⏳ Ends: {esc(_fmt_ts(stats.get('ends')))}")
+    return L
+
+
+def _card_footer(stats):
+    L = [f"🕒 Updated: {esc(_fmt_ts(stats.get('updated')))} · ⏳ Ends: {esc(_fmt_ts(stats.get('ends')))}"]
     code = stats.get("group", {}).get("code") or ""
     if code:
         L.append(f"🔗 binance.com/en/activity/trading-competition/{esc(code)}")
+    return L
 
+
+def build_card(stats):
+    """Full card for a single track (tail or top-N shape)."""
+    L = [f"📐 <b>{esc(title_for(stats))}</b>"]
+    tt = track_title(stats.get("activity")) if stats.get("activity") else None
+    if tt and tt.lower() != title_for(stats).lower():
+        L.append(f"🎯 <b>{esc(tt)}</b>")
+    L += _card_body(stats)
+    L.append("")
+    L += _card_footer(stats)
+    return "\n".join(L)
+
+
+def build_multi_card(group_title, stats_list):
+    """One card containing several sub-tracks (e.g. Futures: All + Altcoin)."""
+    if not stats_list:
+        return ""
+    L = [f"📐 <b>{esc(group_title)}</b>", "🎯 <b>Futures Competition</b>"]
+    for s in stats_list:
+        st = track_title(s.get("activity")) if s.get("activity") else None
+        L.append("")
+        if st:
+            L.append(f"<b>── {esc(st)} ──</b>")
+        L += _card_body(s)
+    L.append("")
+    L += _card_footer(stats_list[0])
     return "\n".join(L)
 
 
@@ -607,28 +666,41 @@ def build_summary_line(stats):
     return (f"<b>{esc(title_for(stats))}</b> — {tail} · {rate_txt} · {state}")
 
 
-def build_tracks_message(stats_list):
+def build_tracks_message(entries):
     """One-line summary of every track in a multi-track campaign."""
-    if not stats_list:
+    if not entries:
         return "No competition tracks found."
-    group_title = title_for(stats_list[0])
-    lines = [f"🎯 <b>{esc(group_title)}</b> — {len(stats_list)} track(s):", ""]
+    first = entries[0]
+    first_stats = first["stats"] if first["kind"] == "single" else first["stats_list"][0]
+    group_title = title_for(first_stats)
+    lines = [f"🎯 <b>{esc(group_title)}</b> — {len(entries)} track(s):", ""]
     medals = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-    for i, s in enumerate(stats_list):
+    for i, e in enumerate(entries):
         num = medals[i] if i < len(medals) else f"{i + 1}."
-        tt = track_title(s.get("activity")) or "Track"
-        unit = s["unit"]
-        pool = s.get("pool")
-        shape = s.get("shape", "tail")
-        if shape == "topN":
-            structure = f"top {s.get('top_n')} split"
+        if e["kind"] == "single":
+            s = e["stats"]
+            tt = track_title(s.get("activity")) or "Track"
+            unit = s["unit"]
+            pool = s.get("pool")
+            shape = s.get("shape", "tail")
+            if shape == "topN":
+                structure = f"top {s.get('top_n')} split"
+            else:
+                structure = f"rank {s.get('tail_start')}+ split"
+            cap = f", cap {fmt_fixed(s['cap'], 4)} {s['cap_unit']}" if s.get("cap") else ", no cap"
+            rate = s.get("rate_per_1000")
+            rate_txt = f" · {fmt_num(rate)} {unit}/$1k" if rate else ""
+            lines.append(f"{num} <b>{esc(tt)}</b> — {esc(fmt_num(pool, 0) if pool else '?')} {unit} "
+                         f"({structure}{cap}){rate_txt}")
         else:
-            structure = f"rank {s.get('tail_start')}+ split"
-        cap = f", cap {fmt_fixed(s['cap'], 4)} {s['cap_unit']}" if s.get("cap") else ", no cap"
-        rate = s.get("rate_per_1000")
-        rate_txt = f" · {fmt_num(rate)} {unit}/$1k" if rate else ""
-        lines.append(f"{num} <b>{esc(tt)}</b> — {esc(fmt_num(pool, 0) if pool else '?')} {unit} "
-                     f"({structure}{cap}){rate_txt}")
+            subs = e["stats_list"]
+            pools = " + ".join(esc(fmt_num(s.get('pool'), 0) if s.get('pool') else '?') for s in subs)
+            units = {s["unit"] for s in subs}
+            unit = next(iter(units)) if len(units) == 1 else "/".join(sorted(units))
+            lines.append(f"{num} <b>{esc(e['title'])}</b> — {pools} {unit} "
+                         f"({len(subs)} sub-competitions, top-300 splits)")
+    lines.append("")
+    lines.append("<i>/tracks &lt;code&gt; [count] — e.g. /tracks 1 for the first track only</i>")
     return "\n".join(lines)
 
 

@@ -28,9 +28,10 @@ import traceback
 import requests
 
 from binance_api import BinanceAPI
-from cards import (build_card, build_campaigns_message, build_summary_line,
-                   build_tracks_message, compute, compute_all_tracks, esc,
-                   identify_tracks, volume_fingerprint)
+from cards import (build_card, build_campaigns_message, build_multi_card,
+                   build_summary_line, build_tracks_message, compute,
+                   compute_all_tracks, esc, identify_tracks, title_for,
+                   volume_fingerprint)
 from campaigns import (Campaign, list_running_campaigns, colosseum_entries,
                        enrich, set_proxy, set_jina_key)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -221,7 +222,7 @@ class Engine:
         return stats
 
     def refresh_tracks(self, item):
-        """Resolve a competition → stats for EVERY track (Spot/bStock/Futures/…)."""
+        """Resolve a competition → track entries (Spot/bStock/TradFi/Futures)."""
         group, activities = self.api.resolve_competition(item)
         if not group:
             return None
@@ -230,10 +231,14 @@ class Engine:
             ev = [int(v) for v in ev]
         except (TypeError, ValueError):
             ev = (60000, 30000, 10000, 5000, 1000)
-        stats_list = compute_all_tracks(self.api, group, activities)
-        for s in stats_list:
-            s["example_volumes"] = list(ev)
-        return stats_list
+        entries = compute_all_tracks(self.api, group, activities)
+        for e in entries:
+            if e["kind"] == "single":
+                e["stats"]["example_volumes"] = list(ev)
+            else:
+                for s in e["stats_list"]:
+                    s["example_volumes"] = list(ev)
+        return entries
 
     def refresh_all(self):
         out, seen = [], set()
@@ -537,7 +542,7 @@ class CommandHandler:
             "<b>Binance Spot Competition bot</b>\n"
             "🤖 Auto-tracks every running campaign (no setup needed)\n"
             "/spotcomp <i>TOKEN|code</i> — proportional-share estimator card\n"
-            "/tracks <i>TOKEN|code</i> — all tracks of a campaign (Spot/bStock/TradFi/Futures)\n"
+            "/tracks <i>TOKEN|code</i> [count] — all tracks (Spot/bStock/TradFi/Futures); /tracks 1 = first track\n"
             "/campaigns — all running spot campaigns (with clickable buttons)\n"
             "/comps — all tracked competitions\n"
             "/watch <i>TOKEN|code</i> — force-track a competition\n"
@@ -561,6 +566,8 @@ class CommandHandler:
                                 "Try the exact competition code from the Binance URL:\n"
                                 "binance.com/en/activity/trading-competition/<code>")
             return
+        self.engine.cfg.state["last_track_code"] = arg
+        self.engine.cfg.save_state()
         self.engine.tg.send(chat_id, build_card(stats))
         # hint when the campaign has several tracks (Spot/bStock/TradFi/Futures)
         try:
@@ -573,23 +580,46 @@ class CommandHandler:
             pass
 
     def _tracks(self, chat_id, arg):
-        if not arg:
-            self.engine.tg.send(chat_id, "Usage: /tracks <i>TOKEN|code</i>  (e.g. /tracks 202609tradersleague4)")
+        # /tracks <code> [count]   → first `count` tracks (default: all)
+        # /tracks <count>          → uses the last-used campaign code
+        parts = (arg or "").split()
+        code = None
+        count = None
+        for p in parts:
+            if p.isdigit():
+                count = int(p)
+            elif code is None:
+                code = p
+        if not code:
+            code = self.engine.cfg.state.get("last_track_code")
+        if not code:
+            self.engine.tg.send(chat_id,
+                "Usage: /tracks <i>CODE|TOKEN</i> [count]\n"
+                "e.g. /tracks 202609tradersleague4 · /tracks 1 (first track)")
             return
-        self.engine.tg.send(chat_id, f"⏳ Fetching tracks for <b>{esc(arg)}</b> …")
+        self.engine.cfg.state["last_track_code"] = code
+        self.engine.cfg.save_state()
+        self.engine.tg.send(chat_id, f"⏳ Fetching tracks for <b>{esc(code)}</b> …")
         try:
-            stats_list = self.engine.refresh_tracks(arg)
+            entries = self.engine.refresh_tracks(code)
         except Exception as e:
             self.engine.tg.send(chat_id, f"❌ Error: {esc(e)}")
             return
-        if not stats_list:
+        if not entries:
             self.engine.tg.send(chat_id,
-                                f"❌ No competition found for <b>{esc(arg)}</b>.\n"
+                                f"❌ No competition found for <b>{esc(code)}</b>.\n"
                                 "Try the exact competition code from the Binance URL.")
             return
-        self.engine.tg.send(chat_id, build_tracks_message(stats_list))
-        for s in stats_list:
-            self.engine.tg.send(chat_id, build_card(s))
+        if count and count > 0:
+            entries = entries[:count]
+        self.engine.tg.send(chat_id, build_tracks_message(entries))
+        for e in entries:
+            if e["kind"] == "single":
+                self.engine.tg.send(chat_id, build_card(e["stats"]))
+            else:
+                self.engine.tg.send(chat_id,
+                                    build_multi_card(title_for(e["stats_list"][0]),
+                                                     e["stats_list"]))
 
     def _campaigns(self, chat_id, arg=""):
         if arg:
