@@ -218,22 +218,43 @@ class BinanceAPI:
 
 
 # ------------------------------------------------------------------ parsers
-def flatten_rich_text(node, out):
-    """Flatten Binance rich-text nodes into plain text chunks."""
+def flatten_rich_text(node, out, i18n=None):
+    """Flatten Binance rich-text nodes into plain text chunks.
+
+    `RichTextI18nKey` nodes hold an i18n key instead of literal text — resolve
+    them via the `i18n` dict (from load_i18n) when provided.
+    """
     if isinstance(node, dict):
         cfg = node.get("config")
-        if isinstance(cfg, dict) and isinstance(cfg.get("content"), str):
-            out.append(cfg["content"])
-        elif isinstance(cfg, dict) and isinstance(cfg.get("content"), (list, dict)):
-            flatten_rich_text(cfg["content"], out)
+        if isinstance(cfg, dict):
+            content = cfg.get("content")
+            if node.get("id") == "RichTextI18nKey" and isinstance(content, str):
+                out.append((i18n or {}).get(content, content))
+            elif isinstance(content, str):
+                out.append(content)
+            elif isinstance(content, (list, dict)):
+                flatten_rich_text(content, out, i18n)
         for v in node.values():
-            flatten_rich_text(v, out)
+            flatten_rich_text(v, out, i18n)
     elif isinstance(node, list):
         for v in node:
-            flatten_rich_text(v, out)
+            flatten_rich_text(v, out, i18n)
 
 
-def group_rule_text(group):
+def rich_text_to_text(raw, i18n=None):
+    """Convert a rich-text structure (dict or JSON string) to plain text,
+    resolving i18n keys."""
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except (TypeError, ValueError):
+            return raw
+    chunks = []
+    flatten_rich_text(raw, chunks, i18n)
+    return "".join(chunks)
+
+
+def group_rule_text(group, i18n=None):
     """Plain text of the competition's rules (contains the tail cap)."""
     rule = (group.get("i18nContent", {}).get("homepage", {}) or {}).get("ruleContent") or {}
     raw = rule.get("rule") or ""
@@ -244,16 +265,52 @@ def group_rule_text(group):
             node = None
         if node is not None:
             chunks = []
-            flatten_rich_text(node, chunks)
+            flatten_rich_text(node, chunks, i18n)
             return "".join(chunks)
         texts = re.findall(r'"content":"((?:[^"\\]|\\.)*)"', raw)
         return "".join(t.encode("utf-8").decode("unicode_escape", "ignore") for t in texts)
     chunks = []
-    flatten_rich_text(rule, chunks)
+    flatten_rich_text(rule, chunks, i18n)
     return "".join(chunks)
 
 
-def tail_cap_from_text(text):
+#: Binance frontend i18n resources (English) — hold the real campaign texts
+#: that the bapi serves as untranslated "gro-*" keys.
+I18N_RESOURCE_URLS = [
+    "https://bin.bnbstatic.com/api/i18n/-/web/cms/en/growth-platform",
+    "https://bin.bnbstatic.com/api/i18n/-/web/cms/en/activity-ui",
+]
+
+_i18n = {"ts": 0.0, "data": {}}
+_I18N_TTL = 24 * 3600
+
+
+def load_i18n(force=False):
+    """Load Binance's frontend i18n resources → flat {key: text} dict.
+
+    Cached in memory for 24h. Returns {} on failure (never raises).
+    """
+    global _i18n
+    now = time.time()
+    if not force and _i18n.get("data") and (now - _i18n.get("ts", 0)) < _I18N_TTL:
+        return _i18n["data"]
+    merged = {}
+    for url in I18N_RESOURCE_URLS:
+        try:
+            resp = requests.get(url, timeout=30,
+                                headers={"User-Agent": HEADERS["User-Agent"]})
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict):
+                merged.update(data)
+        except Exception:
+            continue
+    if merged:
+        _i18n = {"ts": now, "data": merged}
+    return merged
+
+
+def tail_cap_from_text(text, prefer_unit=None):
     """Extract the per-user cap from competition rules text.
 
     Handles multiple patterns:
@@ -264,7 +321,9 @@ def tail_cap_from_text(text):
       - "cap of 500 XPL"
       - "limit of 500 XPL per user"
 
-    Returns (amount, token_symbol) or (None, None).
+    When `prefer_unit` is given (e.g. "BNB"), a match whose token matches that
+    unit wins over earlier matches (so a sprint-round cap doesn't shadow the
+    main-pool cap). Returns (amount, token_symbol) or (None, None).
     """
     if not text:
         return None, None
@@ -284,14 +343,23 @@ def tail_cap_from_text(text):
         r"limit\s+(?:of\s+)?([\d][\d,.]*)\s*([A-Za-z][A-Za-z0-9]*)",
     ]
 
+    matches = []
     for pattern in patterns:
-        m = re.search(pattern, text, re.I)
-        if m:
+        for m in re.finditer(pattern, text, re.I):
             amount = float(m.group(1).replace(",", ""))
             token = m.group(2).upper()
-            return amount, token
+            matches.append((amount, token))
 
-    return None, None
+    if not matches:
+        return None, None
+
+    if prefer_unit:
+        pu = prefer_unit.upper()
+        for amount, token in matches:
+            if token == pu:
+                return amount, token
+
+    return matches[0]
 
 
 _I18N_KEY_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")

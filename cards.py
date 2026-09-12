@@ -16,7 +16,8 @@ import json
 import re
 import time
 
-from binance_api import group_rule_text, is_i18n_key, tail_cap_from_text
+from binance_api import (group_rule_text, is_i18n_key, load_i18n,
+                         rich_text_to_text, tail_cap_from_text)
 
 TOP1000_CUTOFF = 1000
 
@@ -130,11 +131,10 @@ def compute(api, group, activities):
 
     price = api.token_price(unit)
 
-    # --- CAP DETECTION (FIXED) ---
-    # Only use cap if explicitly found in rules text.
-    # DO NOT fall back to equal_split as cap — that makes everything appear "CAPPED".
-    cap, cap_unit = tail_cap_from_text(group_rule_text_for(group))
-    # cap stays None if not found — means NO per-user cap for this competition
+    # --- CAP DETECTION ---
+    # Only use cap if explicitly found in rules text; no fallback to
+    # equal_split (that would make everything look "CAPPED").
+    cap, cap_unit = _extract_cap(group, act, unit)
     cap_unit = cap_unit or unit
 
     rate_per_1000 = (tail_pool / tail_vol * 1000) if (tail_pool and tail_vol) else 0
@@ -170,6 +170,44 @@ def compute(api, group, activities):
 
 def group_rule_text_for(group):
     return group_rule_text(group)
+
+
+def _extract_cap(group, act, unit):
+    """Find the tail (rank 1001+) per-user cap for the main activity.
+
+    Binance stores the real reward rules in two places:
+      - the group's ruleContent (translated for standard campaigns), and
+      - the activity's ruleContent / termAndConditionContent / reward*
+        sections, which for multi-track campaigns (e.g. Traders League 4)
+        reference RichTextI18nKey nodes that only resolve via the frontend
+        i18n resource.
+
+    We load the i18n resource, flatten every rule source, then scan for a cap
+    that matches the reward unit (so sprint/other caps don't shadow it).
+    """
+    i18n = load_i18n()
+    sources = []
+
+    # group-level rules (standard token tournaments)
+    sources.append(group_rule_text(group, i18n=i18n))
+
+    # activity-level rules + terms (multi-track campaigns put everything here)
+    ai18n = (act.get("i18nContent") or {}) if isinstance(act, dict) else {}
+    for field in ("ruleContent", "termAndConditionContent",
+                  "rewardStructureContent", "rewardAllocationContent"):
+        v = ai18n.get(field)
+        if isinstance(v, dict):
+            raw = v.get("rule") or v.get("text")
+            if raw:
+                sources.append(rich_text_to_text(raw, i18n))
+            # title/subtitle may themselves be i18n keys with cap text
+            for sub in ("title", "subtitle", "sectionTitle", "sectionSubtitle"):
+                sv = v.get(sub)
+                if isinstance(sv, str):
+                    sources.append((i18n or {}).get(sv, sv))
+
+    combined = "\n".join(s for s in sources if s)
+    return tail_cap_from_text(combined, prefer_unit=unit)
 
 
 _GENERIC_WORDS = {
