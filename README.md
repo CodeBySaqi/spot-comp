@@ -122,6 +122,10 @@ python bot.py --cli            # whole watchlist
 | `/spotcomp spot-altcoin-festival-wave-pyth1` | …or by exact code |
 | `/tracks CODE` | All tracks of a multi-track campaign (Spot / bStock / TradFi / Futures) |
 | `/tracks CODE N` | First N tracks only (e.g. `/tracks CODE 1` = Spot track) |
+
+**Short aliases** — long codes like `202609tradersleague4` can be called as
+`tl4`, `tradersleague4`, `league4`, `carnival`, etc. (see `code_aliases` in
+config.json — add your own). E.g. `/tracks tl4 1`, `/spotcomp tl4`, `/watch tl4`.
 | `/campaigns` | List **all running spot campaigns** (prize, end time, link) |
 | `/campaigns TOKEN` | One campaign's card (same as `/spotcomp TOKEN`) |
 | `/comps` | One-line status of all tracked competitions |

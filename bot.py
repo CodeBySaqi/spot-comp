@@ -49,6 +49,7 @@ DEFAULT_CONFIG = {
     "auto_remove_ended": True,
     "track_all_running": True,
     "campaigns_cache_minutes": 30,
+    "code_aliases": {"tl4": "202609tradersleague4"},
     "post_first_run": False,
     "proxy": "",
     "binance_verbose": False,
@@ -548,7 +549,7 @@ class CommandHandler:
             "/watch <i>TOKEN|code</i> — force-track a competition\n"
             "/unwatch <i>TOKEN|code</i> — stop tracking one\n"
             "/now — refresh + post now\n"
-            "Example: <code>/spotcomp XPL</code>")
+            "Example: <code>/spotcomp XPL</code> · <code>/tracks tl4</code> (short alias for Traders League 4)")
 
     def _spotcomp(self, chat_id, arg):
         if not arg:
@@ -772,6 +773,7 @@ def main():
     set_jina_key(cfg.cfg.get("jina_api_key") or os.environ.get("SPOTCOMP_JINA_KEY") or "")
     api = BinanceAPI(proxy=cfg.cfg.get("proxy") or os.environ.get("SPOTCOMP_PROXY") or None,
                      verbose=bool(cfg.cfg.get("binance_verbose")))
+    api.set_aliases(cfg.cfg.get("code_aliases") or {})
     if args.cli:
         run_cli(cfg, api, args.cli)
         return

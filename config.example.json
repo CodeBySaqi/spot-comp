@@ -8,5 +8,8 @@
   "auto_remove_ended": true,
   "track_all_running": true,
   "campaigns_cache_minutes": 30,
+  "code_aliases": {
+    "tl4": "202609tradersleague4"
+  },
   "jina_api_key": "jina_...get-free-key-at-jina.ai-reader"
 }

@@ -64,6 +64,21 @@ CODE_PATTERNS = [
 ]
 
 
+#: short aliases → canonical competition codes (handy for long codes like
+#: "202609tradersleague4"). Users can add their own via `code_aliases` in
+#: config.json.
+CODE_ALIASES = {
+    "tl": "202609tradersleague4",
+    "tl4": "202609tradersleague4",
+    "tls4": "202609tradersleague4",
+    "tradersleague4": "202609tradersleague4",
+    "traders-league-4": "202609tradersleague4",
+    "league4": "202609tradersleague4",
+    "league": "202609tradersleague4",
+    "carnival": "202609tradersleague4",
+}
+
+
 class BinanceError(Exception):
     pass
 
@@ -77,8 +92,17 @@ class BinanceAPI:
         self.session = requests.Session()
         self.session.headers.update(HEADERS)
         self._colo_cache = {}  # Cache for Colosseum page data
+        self.aliases = dict(CODE_ALIASES)
         if proxy:
             self.session.proxies = {"http": proxy, "https": proxy}
+
+    def set_aliases(self, mapping):
+        """Merge user-defined code aliases (from config.json `code_aliases`)."""
+        if isinstance(mapping, dict):
+            self.aliases.update({str(k).lower(): str(v) for k, v in mapping.items()})
+
+    def _resolve_alias(self, s):
+        return self.aliases.get(s.strip().lower(), s)
 
     # ------------------------------------------------------------------ http
     def _post(self, path, body):
@@ -164,7 +188,7 @@ class BinanceAPI:
         if not token_or_code:
             return None, []
 
-        low = token_or_code.lower()
+        low = self._resolve_alias(token_or_code.lower())
         token = low.replace("/usdt", "").replace("/usdc", "").replace("/", "").strip()
 
         if "-" in low or "/" in low:
