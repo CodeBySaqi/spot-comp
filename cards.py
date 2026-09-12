@@ -15,7 +15,7 @@ import html as _html
 import json
 import time
 
-from binance_api import group_rule_text, tail_cap_from_text
+from binance_api import group_rule_text, is_i18n_key, tail_cap_from_text
 
 TOP1000_CUTOFF = 1000
 
@@ -178,9 +178,9 @@ def title_for(stats):
     hero = hp.get("heroBannerContent", {}) or {}
     seo = hp.get("seoContent", {}) or {}
     for src in (hero, seo, hp):
-        t = src.get("title")
-        if t and str(t).strip().lower() not in ("", "null"):
-            return str(t).strip()
+        t = str(src.get("title") or "").strip()
+        if t and t.lower() != "null" and not is_i18n_key(t):
+            return t
     return f"{stats['unit']} Trading Competition"
 
 

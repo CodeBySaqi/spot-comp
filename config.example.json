@@ -1,11 +1,12 @@
 {
-  "bot_token": "8825590403:AAEON41izqAevVFves3P-_jf_2ZY_6Si55o",
-  "channel_id": "-1004352282583",
+  "bot_token": "123456789:AA...paste-from-BotFather",
+  "channel_id": "@your_channel",
   "refresh_minutes": 15,
-  "watchlist": ["PYTH", "RE"],
+  "watchlist": ["REZ", "HOLO"],
   "announce_new": true,
   "post_on_update_only": true,
   "auto_remove_ended": true,
   "track_all_running": true,
-  "campaigns_cache_minutes": 30
+  "campaigns_cache_minutes": 30,
+  "jina_api_key": "jina_...get-free-key-at-jina.ai-reader"
 }

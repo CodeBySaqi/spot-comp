@@ -1,0 +1,14 @@
+# secrets & runtime state — never commit
+config.json
+state.json
+campaigns_cache.json
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# misc
+.DS_Store
+*.log

@@ -48,10 +48,16 @@ CODE_PATTERNS = [
     "spot-altcoin-festival-wave-{token}",
     "spot-altcoin-festival-wave-{token}2",
     "spot-altcoin-festival-wave-{token}3",
+    "spot-altcoin-festival-wave-{token}-r1",
+    "spot-altcoin-festival-wave-{token}-r2",
+    "spot-altcoin-festival-wave-{token}-r3",
     "spot-trading-festival-wave-{token}1",
     "spot-trading-festival-wave-{token}",
     "spot-trading-festival-wave-{token}2",
     "spot-trading-festival-wave-{token}3",
+    "spot-trading-festival-wave-{token}-r1",
+    "spot-trading-festival-wave-{token}-r2",
+    "spot-trading-festival-wave-{token}-r3",
     "{token}-trading-tournament",
     "{token}-trading-competition",
     "spot-{token}-trading-tournament",
@@ -286,3 +292,15 @@ def tail_cap_from_text(text):
             return amount, token
 
     return None, None
+
+
+_I18N_KEY_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)+$")
+
+
+def is_i18n_key(s):
+    """True if a string looks like an untranslated Binance i18n key.
+
+    e.g. "gro-202609tls4-homepage-banner-title" (lowercase + digits + dashes,
+    no spaces). Real titles have spaces / capitals / other punctuation.
+    """
+    return bool(s) and " " not in s and bool(_I18N_KEY_RE.match(s))

@@ -22,6 +22,8 @@ import time
 
 import requests
 
+from binance_api import is_i18n_key
+
 COLOSSEUM_URL = "https://www.binance.com/en/events/spot-colosseum"
 
 # Cache file for last-known-good campaign list
@@ -34,17 +36,20 @@ JINA_API_KEY = os.environ.get("SPOTCOMP_JINA_KEY", "")
 # HTTP proxy for all outbound requests (set by bot.py from config.json)
 PROXY = os.environ.get("SPOTCOMP_PROXY", "")
 
-#: extract campaign links out of the rendered colosseum markdown
+#: extract campaign links out of the rendered colosseum markdown.
+#: Codes may contain slashes (nested groups, e.g.
+#: "202609tradersleague4/Spot-Carnival-Waves-Round1" → group code is the FIRST
+#: segment) and uppercase, so capture the whole path and split afterwards.
 LINK_RE = re.compile(
     r'\[!\[[^\]]*\]\([^)]*\)\s*([^\]]+)\]'
-    r'\(https://www\.binance\.com/activity/trading-competition/([A-Za-z0-9-]+)\)'
+    r'\(https://www\.binance\.com/activity/trading-competition/([A-Za-z0-9/_-]+)\)'
 )
 TOKEN_RE = re.compile(r'([A-Z]{2,12})\s+Token')
 PRIZE_RE = re.compile(r'([\d,]+(?:\.\d+)?\s*[A-Z]{2,12})')
 ENDS_RE = re.compile(r'Ends at\s+([\d-]+ [\d:]+)')
 
 GENERIC_LINK_RE = re.compile(
-    r'https://www\.binance\.com/activity/trading-competition/([A-Za-z0-9-]+)'
+    r'https://www\.binance\.com/activity/trading-competition/([A-Za-z0-9/_-]+)'
 )
 
 
@@ -280,6 +285,15 @@ def fetch_colosseum_content(timeout=30):
 
 
 # ------------------------------------------------------------- colosseum parse
+def _code_of_path(path):
+    """Return the competition group code for a captured URL path.
+
+    Nested URLs like "202609tradersleague4/Spot-Carnival-Waves-Round1" resolve
+    to the FIRST segment (the activity-group code). Flat codes pass through.
+    """
+    return path.split("/", 1)[0]
+
+
 def parse_colosseum(markdown):
     """Parse campaign entries out of the colosseum markdown/html.
 
@@ -290,7 +304,7 @@ def parse_colosseum(markdown):
     seen = set()
     for m in LINK_RE.finditer(markdown):
         text = re.sub(r"\s+", " ", m.group(1)).strip()
-        code = m.group(2)
+        code = _code_of_path(m.group(2))
         if code.lower() in seen:
             continue
         seen.add(code.lower())
@@ -308,7 +322,7 @@ def parse_colosseum(markdown):
     if not entries:
         # fallback: any campaign URL; token/title get filled in later by enrich()
         for m in GENERIC_LINK_RE.finditer(markdown):
-            code = m.group(1)
+            code = _code_of_path(m.group(1))
             if code.lower() in seen:
                 continue
             seen.add(code.lower())
@@ -361,7 +375,9 @@ def enrich(api, entry):
             hp = (group.get("i18nContent") or {}).get("homepage") or {}
             hero = hp.get("heroBannerContent") or {}
             t = (hero.get("title") or hp.get("title") or "").strip()
-            if t and t.lower() != "null":
+            # only accept a real title; ignore untranslated i18n keys like
+            # "gro-202609tls4-homepage-banner-title" (keep the raw link text)
+            if t and t.lower() != "null" and not is_i18n_key(t):
                 title = t
             pci = hp.get("prizePoolInformationContent") or {}
             tp = (pci.get("totalPrizeAmount") or "").strip()
