@@ -13,6 +13,7 @@ Replicates the "Rank 1001+ proportional share" card:
 
 import html as _html
 import json
+import re
 import time
 
 from binance_api import group_rule_text, is_i18n_key, tail_cap_from_text
@@ -171,16 +172,76 @@ def group_rule_text_for(group):
     return group_rule_text(group)
 
 
+_GENERIC_WORDS = {
+    "spot", "altcoin", "festival", "wave", "waves", "trading",
+    "competition", "tournament", "round", "the", "season", "carnival",
+}
+_COMPOUND_WORDS = {
+    "tradersleague": "Traders League",
+}
+
+
+def token_from_code(code):
+    """Extract a token symbol from a wave-style code (e.g. ...wave-REZ-R1 → REZ)."""
+    m = re.search(r"wave-([A-Za-z0-9]+?)(?:-?[Rr]?\d+)?$", code or "")
+    if m:
+        tok = m.group(1).upper()
+        if len(tok) >= 2 and not tok.isdigit():
+            return tok
+    return None
+
+
+def humanize_code(code):
+    """Turn a competition code into a readable fallback title.
+
+    e.g. "202609tradersleague4" → "Traders League 4"
+         "spot-trading-festival-wave-r3" → "Round 3"
+    """
+    code = (code or "").strip()
+    if not code:
+        return None
+    words = []
+    for part in re.split(r"[-/_]+", code):
+        part = re.sub(r"^\d{4,}", "", part)          # drop date-ish prefixes (202609)
+        m = re.match(r"^(.*?[a-zA-Z])(\d+)$", part)
+        base = m.group(1) if m else part
+        num = m.group(2) if m else None
+        low = base.lower()
+        if low == "r" and num:
+            words.append(f"Round {num}")
+            continue
+        if low in _GENERIC_WORDS:
+            continue
+        if not base:
+            continue
+        pretty = _COMPOUND_WORDS.get(low, base[:1].upper() + base[1:])
+        words.append(pretty)
+        if num:
+            words.append(num)
+    return " ".join(words).strip() or None
+
+
 def title_for(stats):
     group = stats["group"]
     i18n = group.get("i18nContent", {}) or {}
     hp = i18n.get("homepage", {}) or {}
     hero = hp.get("heroBannerContent", {}) or {}
     seo = hp.get("seoContent", {}) or {}
+    # 1) real title from Binance (not an untranslated i18n key)
     for src in (hero, seo, hp):
         t = str(src.get("title") or "").strip()
         if t and t.lower() != "null" and not is_i18n_key(t):
             return t
+    # 2) token embedded in the code (e.g. ...wave-REZ-R1)
+    code = group.get("code") or ""
+    tok = token_from_code(code)
+    if tok:
+        return f"{tok} Trading Competition"
+    # 3) humanize the code itself (e.g. 202609tradersleague4)
+    human = humanize_code(code)
+    if human:
+        return human
+    # 4) last resort
     return f"{stats['unit']} Trading Competition"
 
 
