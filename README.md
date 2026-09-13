@@ -118,21 +118,38 @@ python bot.py --cli            # whole watchlist
 
 | Command | Effect |
 |---------|--------|
-| `/spotcomp XPL` | Full estimator card for a token or competition code |
-| `/spotcomp spot-altcoin-festival-wave-pyth1` | …or by exact code |
+| `/comp TOKEN` (or `/spotcomp`) | Full estimator card for a token or competition code |
 | `/tracks CODE` | All tracks of a multi-track campaign (Spot / bStock / TradFi / Futures) |
-| `/tracks CODE N` | First N tracks only (e.g. `/tracks CODE 1` = Spot track) |
-
-**Short aliases** — long codes like `202609tradersleague4` can be called as
-`tl4`, `tradersleague4`, `league4`, `carnival`, etc. (see `code_aliases` in
-config.json — add your own). E.g. `/tracks tl4 1`, `/spotcomp tl4`, `/watch tl4`.
-| `/campaigns` | List **all running spot campaigns** (prize, end time, link) |
-| `/campaigns TOKEN` | One campaign's card (same as `/spotcomp TOKEN`) |
+| `/tracks CODE N` | ONLY track #N — 1=Spot, 2=bStock, 3=TradFi, 4=Futures |
+| `/price TOKEN` | 24h live ticker price (e.g. `/price btc`) |
+| `/reward` | Reward-distribution dates table (active + recently ended) |
+| `/campaigns` | List **all running spot campaigns** (prize, end time, buttons) |
 | `/comps` | One-line status of all tracked competitions |
 | `/watch TOKEN` | Start tracking a competition |
 | `/unwatch TOKEN` | Stop tracking |
+| `/channels` / `/addchannel` / `/removechannel` | Manage broadcast channels (admin) |
 | `/now` | Refresh + post cards immediately |
 | `/help` | Help |
+
+**Short aliases** — long codes like `202609tradersleague4` can be called as
+`tl4`, `tradersleague4`, `league4`, `carnival`, etc. (see `code_aliases` in
+config.json — add your own). E.g. `/tracks tl4`, `/tracks 2` (bStock), `/comp tl4`.
+
+---
+
+## 24/7 deployment (alwaysdata)
+
+Run the bot under a supervisor so it survives crashes and VPS restarts:
+
+1. `cp config.example.json config.json` and fill in `bot_token`, `channels`, `admin_ids`, `jina_api_key`.
+2. `python3 -m venv venv && venv/bin/pip install -r requirements.txt`
+3. Register **`supervise_bot.sh`** as an alwaysdata service (Advanced → Services):
+   - Command: `/home/<user>/spot-comp/supervise_bot.sh`
+   - Working directory: `/home/<user>/spot-comp`
+4. The script auto-restarts the bot if it crashes, and cleanly kills it on service
+   restart (no orphaned `bot.py` → no Telegram 409 conflicts).
+
+To update code later: `git pull`, then `touch .reload` (the bot self-restarts).
 
 ---
 

@@ -36,10 +36,7 @@ JINA_API_KEY = os.environ.get("SPOTCOMP_JINA_KEY", "")
 # HTTP proxy for all outbound requests (set by bot.py from config.json)
 PROXY = os.environ.get("SPOTCOMP_PROXY", "")
 
-#: extract campaign links out of the rendered colosseum markdown.
-#: Codes may contain slashes (nested groups, e.g.
-#: "202609tradersleague4/Spot-Carnival-Waves-Round1" → group code is the FIRST
-#: segment) and uppercase, so capture the whole path and split afterwards.
+#: extract campaign links out of the rendered colosseum markdown
 LINK_RE = re.compile(
     r'\[!\[[^\]]*\]\([^)]*\)\s*([^\]]+)\]'
     r'\(https://www\.binance\.com/activity/trading-competition/([A-Za-z0-9/_-]+)\)'
@@ -376,7 +373,7 @@ def enrich(api, entry):
             hero = hp.get("heroBannerContent") or {}
             t = (hero.get("title") or hp.get("title") or "").strip()
             # only accept a real title; ignore untranslated i18n keys like
-            # "gro-202609tls4-homepage-banner-title" (keep the raw link text)
+            # "gro-202609tls4-homepage-banner-title"
             if t and t.lower() != "null" and not is_i18n_key(t):
                 title = t
             pci = hp.get("prizePoolInformationContent") or {}
@@ -446,3 +443,4 @@ def list_running_campaigns(api):
     raise RuntimeError(
         f"Could not fetch campaigns from any source: {last_error}"
     )
+

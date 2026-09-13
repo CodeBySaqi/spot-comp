@@ -63,10 +63,8 @@ CODE_PATTERNS = [
     "spot-{token}-trading-tournament",
 ]
 
-
-#: short aliases → canonical competition codes (handy for long codes like
-#: "202609tradersleague4"). Users can add their own via `code_aliases` in
-#: config.json.
+#: short aliases → canonical competition codes. Add your own via `code_aliases`
+#: in config.json.
 CODE_ALIASES = {
     "tl": "202609tradersleague4",
     "tl4": "202609tradersleague4",
@@ -178,6 +176,27 @@ class BinanceAPI:
             except (KeyError, TypeError, ValueError, BinanceError):
                 return None
 
+    def ticker_24hr(self, symbol):
+        """24-hour ticker statistics for a token or pair (e.g. BTC, BTCUSDT, ETH, BMT)."""
+        sym = (symbol or "").strip().upper()
+        if not sym:
+            return None
+        sym_clean = sym.replace("/", "").replace("-", "")
+        candidates = []
+        quotes = ("USDT", "USDC", "FDUSD", "BTC", "BNB", "EUR", "TRY")
+        if not any(sym_clean.endswith(q) and len(sym_clean) > len(q) for q in quotes):
+            candidates.extend([f"{sym_clean}USDT", f"{sym_clean}USDC", f"{sym_clean}FDUSD"])
+        candidates.append(sym_clean)
+
+        for c in candidates:
+            try:
+                data = self._get_json(f"{PRICE_HOST}/api/v3/ticker/24hr?symbol={c}")
+                if data and "lastPrice" in data:
+                    return data
+            except Exception:
+                continue
+        return None
+
     # -------------------------------------------------------------- helpers
     def resolve_competition(self, token_or_code):
         """Resolve a token symbol or a competition code to (group, activities).
@@ -242,6 +261,42 @@ class BinanceAPI:
 
 
 # ------------------------------------------------------------------ parsers
+#: Binance frontend i18n resources (English) — hold the real campaign texts
+#: that the bapi serves as untranslated "gro-*" keys.
+I18N_RESOURCE_URLS = [
+    "https://bin.bnbstatic.com/api/i18n/-/web/cms/en/growth-platform",
+    "https://bin.bnbstatic.com/api/i18n/-/web/cms/en/activity-ui",
+]
+
+_i18n = {"ts": 0.0, "data": {}}
+_I18N_TTL = 24 * 3600
+
+
+def load_i18n(force=False):
+    """Load Binance's frontend i18n resources -> flat {key: text} dict.
+
+    Cached in memory for 24h. Returns {} on failure (never raises).
+    """
+    global _i18n
+    now = time.time()
+    if not force and _i18n.get("data") and (now - _i18n.get("ts", 0)) < _I18N_TTL:
+        return _i18n["data"]
+    merged = {}
+    for url in I18N_RESOURCE_URLS:
+        try:
+            resp = requests.get(url, timeout=30,
+                                headers={"User-Agent": HEADERS["User-Agent"]})
+            resp.raise_for_status()
+            data = resp.json()
+            if isinstance(data, dict):
+                merged.update(data)
+        except Exception:
+            continue
+    if merged:
+        _i18n = {"ts": now, "data": merged}
+    return merged
+
+
 def flatten_rich_text(node, out, i18n=None):
     """Flatten Binance rich-text nodes into plain text chunks.
 
@@ -298,42 +353,6 @@ def group_rule_text(group, i18n=None):
     return "".join(chunks)
 
 
-#: Binance frontend i18n resources (English) — hold the real campaign texts
-#: that the bapi serves as untranslated "gro-*" keys.
-I18N_RESOURCE_URLS = [
-    "https://bin.bnbstatic.com/api/i18n/-/web/cms/en/growth-platform",
-    "https://bin.bnbstatic.com/api/i18n/-/web/cms/en/activity-ui",
-]
-
-_i18n = {"ts": 0.0, "data": {}}
-_I18N_TTL = 24 * 3600
-
-
-def load_i18n(force=False):
-    """Load Binance's frontend i18n resources → flat {key: text} dict.
-
-    Cached in memory for 24h. Returns {} on failure (never raises).
-    """
-    global _i18n
-    now = time.time()
-    if not force and _i18n.get("data") and (now - _i18n.get("ts", 0)) < _I18N_TTL:
-        return _i18n["data"]
-    merged = {}
-    for url in I18N_RESOURCE_URLS:
-        try:
-            resp = requests.get(url, timeout=30,
-                                headers={"User-Agent": HEADERS["User-Agent"]})
-            resp.raise_for_status()
-            data = resp.json()
-            if isinstance(data, dict):
-                merged.update(data)
-        except Exception:
-            continue
-    if merged:
-        _i18n = {"ts": now, "data": merged}
-    return merged
-
-
 def tail_cap_from_text(text, prefer_unit=None):
     """Extract the per-user cap from competition rules text.
 
@@ -346,33 +365,24 @@ def tail_cap_from_text(text, prefer_unit=None):
       - "limit of 500 XPL per user"
 
     When `prefer_unit` is given (e.g. "BNB"), a match whose token matches that
-    unit wins over earlier matches (so a sprint-round cap doesn't shadow the
-    main-pool cap). Returns (amount, token_symbol) or (None, None).
+    unit wins over earlier matches. Returns (amount, token_symbol) or (None, None).
     """
     if not text:
         return None, None
 
     patterns = [
-        # "capped at 500 XPL" / "capped at 500.00 XPL"
         r"capped\s+at\s*([\d][\d,.]*)\s*([A-Za-z][A-Za-z0-9]*)",
-        # "maximum of 500 XPL" / "maximum 500 XPL"
         r"maximum\s+(?:of\s+)?([\d][\d,.]*)\s*([A-Za-z][A-Za-z0-9]*)",
-        # "max 500 XPL" / "max of 500 XPL"
         r"\bmax(?:imum)?\s+(?:of\s+)?([\d][\d,.]*)\s*([A-Za-z][A-Za-z0-9]*)",
-        # "cap of 500 XPL" / "cap at 500 XPL"
         r"\bcap\s+(?:of|at)\s+([\d][\d,.]*)\s*([A-Za-z][A-Za-z0-9]*)",
-        # "up to 500 XPL per user"
         r"up\s+to\s+([\d][\d,.]*)\s*([A-Za-z][A-Za-z0-9]*)\s+(?:per\s+user|each|per\s+participant)",
-        # "limit of 500 XPL"
         r"limit\s+(?:of\s+)?([\d][\d,.]*)\s*([A-Za-z][A-Za-z0-9]*)",
     ]
 
     matches = []
     for pattern in patterns:
         for m in re.finditer(pattern, text, re.I):
-            amount = float(m.group(1).replace(",", ""))
-            token = m.group(2).upper()
-            matches.append((amount, token))
+            matches.append((float(m.group(1).replace(",", "")), m.group(2).upper()))
 
     if not matches:
         return None, None

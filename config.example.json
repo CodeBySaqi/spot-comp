@@ -1,5 +1,7 @@
 {
   "bot_token": "123456789:AA...paste-from-BotFather",
+  "admin_ids": [],
+  "channels": [],
   "channel_id": "@your_channel",
   "refresh_minutes": 15,
   "watchlist": ["REZ", "HOLO"],
@@ -11,5 +13,9 @@
   "code_aliases": {
     "tl4": "202609tradersleague4"
   },
-  "jina_api_key": "jina_...get-free-key-at-jina.ai-reader"
+  "post_first_run": false,
+  "proxy": "",
+  "binance_verbose": false,
+  "jina_api_key": "jina_...get-free-key-at-jina.ai-reader",
+  "example_volumes": [60000, 30000, 10000, 5000, 1000]
 }

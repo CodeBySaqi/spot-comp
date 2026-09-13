@@ -2,6 +2,12 @@
 config.json
 state.json
 campaigns_cache.json
+watchlist.json
+.reload
+
+# logs
+*.log
+supervise.log
 
 # python
 __pycache__/
@@ -11,4 +17,3 @@ venv/
 
 # misc
 .DS_Store
-*.log
