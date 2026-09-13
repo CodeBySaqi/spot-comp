@@ -732,6 +732,7 @@ class CommandHandler:
             "<b>Binance Spot Competition bot</b>\n"
             "🤖 Auto-tracks every running campaign (no setup needed)\n"
             "/comp <i>TOKEN|code</i> — proportional-share estimator card\n"
+            "/tracks <i>TOKEN|code</i> [n] — all tracks, or 1=Spot 2=bStock 3=TradFi 4=Futures\n"
             "/reward — reward distribution dates table (active & ended)\n"
             "/price <i>TOKEN</i> — live price, 24h high/low & volume\n"
             "/campaigns — all running spot campaigns (with clickable buttons)\n"
