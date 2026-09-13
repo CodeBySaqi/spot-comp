@@ -1112,13 +1112,15 @@ def main():
     # responds instantly instead of summing for minutes. Re-runs periodically
     # so a fresh daily leaderboard never makes /tracks slow mid-day.
     def _warm_caches():
+        # start late so the first poll + refresh cycle aren't competing
+        time.sleep(120)
         while True:
             for item in list(cfg.watchlist):
                 try:
                     engine.refresh_tracks(item)
                 except Exception:
                     pass
-                time.sleep(2)
+                time.sleep(3)
             time.sleep(1800)   # every 30 min
 
     threading.Thread(target=_warm_caches, daemon=True).start()

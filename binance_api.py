@@ -95,7 +95,7 @@ class BinanceAPI:
         # ---- global throttle: never exceed ~4 req/s to Binance ----
         self._rl_lock = threading.Lock()
         self._rl_next = 0.0            # earliest allowed time for next request
-        self._rl_min_interval = 0.25   # seconds between requests
+        self._rl_min_interval = 0.35   # seconds between requests (~3 req/s)
         self._rl_penalty_until = 0.0   # back-off until (set on 429)
         if proxy:
             self.session.proxies = {"http": proxy, "https": proxy}
