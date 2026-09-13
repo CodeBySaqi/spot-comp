@@ -579,27 +579,27 @@ def build_rewards_table_message(active_campaigns, ended_history):
     if active_campaigns:
         active_rows = []
         for c in active_campaigns:
-            token = c.get("token") or c.get("code") or "—"
+            name = c.get("name") or c.get("token") or c.get("code") or "—"
             ends = c.get("ends_date") or "—"
             rw_date = c.get("reward_date") or "TBA"
-            active_rows.append([token, ends, rw_date])
-        table_str = format_ascii_table(["Token", "Ends", "Reward Date"], active_rows)
+            active_rows.append([name, ends, rw_date])
+        table_str = format_ascii_table(["Competition", "Ends", "Reward Date"], active_rows)
         lines.append(f"<pre>{esc(table_str)}</pre>")
     else:
         lines.append("<i>No active campaigns running right now.</i>")
 
     lines.append("")
 
-    # Ended Section (Max 5)
-    lines.append("🏁 <b>Recently Ended (Last 5)</b>")
+    # Ended Section (Max 10)
+    lines.append("🏁 <b>Recently Ended</b>")
     if ended_history:
         ended_rows = []
-        for c in ended_history[:5]:
-            token = c.get("token") or c.get("name") or c.get("code") or "—"
+        for c in ended_history[:10]:
+            name = c.get("name") or c.get("token") or c.get("code") or "—"
             ends = c.get("ends_date") or c.get("ended") or "—"
             rw_date = c.get("reward_date") or "TBA"
-            ended_rows.append([token, ends, rw_date])
-        table_str = format_ascii_table(["Token", "Ended", "Reward Date"], ended_rows)
+            ended_rows.append([name, ends, rw_date])
+        table_str = format_ascii_table(["Competition", "Ended", "Reward Date"], ended_rows)
         lines.append(f"<pre>{esc(table_str)}</pre>")
     else:
         lines.append("<i>No ended competitions recorded yet.</i>")

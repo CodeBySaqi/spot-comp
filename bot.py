@@ -550,19 +550,20 @@ class Engine:
         reward_date = extract_reward_date(rule_txt, ends_ms)
         token_name = stats.get("unit") or title
 
-        # Record in ended history (max 5)
+        # Record in ended history (max 10) — store the NAME, not the coin
         with self.lock:
             history = list(self.cfg.state.get("ended_competitions_history") or [])
             history = [h for h in history if self._norm(h.get("code")) != code]
             entry = {
                 "code": code,
-                "token": token_name,
+                "name": title,          # competition name e.g. "RE Trading Tournament"
+                "token": token_name,    # reward coin e.g. "RE"
                 "ends_date": ends_date,
                 "reward_date": reward_date,
                 "ts": int(time.time())
             }
             history.insert(0, entry)
-            self.cfg.state["ended_competitions_history"] = history[:5]
+            self.cfg.state["ended_competitions_history"] = history[:10]
             self.cfg.save_state()
 
         if self._remove_from_watchlist(item, code=code or None):
@@ -599,16 +600,23 @@ class Engine:
 
             ends_date = time.strftime("%Y-%m-%d", time.gmtime(ends_ms / 1000)) if ends_ms else "—"
             rw_date = extract_reward_date(rule_txt, ends_ms)
-            token_display = c.token
-            if "Season" in (c.title or ""):
-                m = re.search(r'Season\s+\d+', c.title)
-                token_display = m.group(0) if m else c.title
-            elif not token_display or token_display == "?" or token_display == "R":
-                token_display = c.title or code
+
+            # competition name: prefer the enriched title, fall back to code
+            name = (c.title or "").strip()
+            if not name or name.lower() == "null":
+                name = code
+            # trim long "Trade to Share Up to..." raw text to just the token event name
+            if "Share Up to" in name:
+                m = re.search(r'Share Up to ([\d,]+\s*[A-Za-z0-9]+)', name)
+                if m:
+                    name = m.group(1)
+                else:
+                    name = name.split(" Ends")[0].strip() or name
 
             active.append({
                 "code": code,
-                "token": token_display,
+                "name": name,
+                "token": c.token,
                 "ends_date": ends_date,
                 "reward_date": rw_date,
             })
