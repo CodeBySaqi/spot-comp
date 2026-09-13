@@ -106,7 +106,8 @@ class Config:
             save_json(STATE_PATH, snapshot)
 
     def save_config(self):
-        save_json(CONFIG_PATH, self.cfg)
+        with self._save_lock:
+            save_json(CONFIG_PATH, self.cfg)
 
 
 # ------------------------------------------------------------------ telegram
@@ -408,9 +409,14 @@ class Engine:
         Supports single string/int, list of strings/ints, or comma-separated string,
         under keys 'channels', 'channel_ids', or 'channel_id'.
         """
-        raw = (self.cfg.cfg.get("channels")
-               or self.cfg.cfg.get("channel_ids")
-               or self.cfg.cfg.get("channel_id"))
+        # If the `channels` key exists at all, it is the source of truth —
+        # even when empty (so a leftover legacy `channel_id` doesn't resurrect
+        # a channel the admin just removed).
+        if "channels" in self.cfg.cfg:
+            raw = self.cfg.cfg.get("channels")
+        else:
+            raw = (self.cfg.cfg.get("channel_ids")
+                   or self.cfg.cfg.get("channel_id"))
         if not raw:
             return []
         items = []
@@ -437,14 +443,15 @@ class Engine:
         ch = str(channel).strip()
         if not ch:
             return False
-        current = self.get_channels()
-        if any(c.lower() == ch.lower() for c in current):
-            return False
-        current.append(ch)
-        with self.lock:
+        with self.lock:   # lock the WHOLE read-modify-write (race-safe)
+            current = self.get_channels()
+            if any(c.lower() == ch.lower() for c in current):
+                return False
+            current.append(ch)
             self.cfg.cfg["channels"] = current
-            # remove legacy single key if present so it doesn't conflict
+            # remove legacy keys so they can't conflict with the list
             self.cfg.cfg.pop("channel_id", None)
+            self.cfg.cfg.pop("channel_ids", None)
             self.cfg.save_config()
         return True
 
@@ -452,13 +459,14 @@ class Engine:
         ch = str(channel).strip().lower()
         if not ch:
             return False
-        current = self.get_channels()
-        new_list = [c for c in current if c.lower() != ch]
-        if len(new_list) == len(current):
-            return False
-        with self.lock:
+        with self.lock:   # lock the WHOLE read-modify-write (race-safe)
+            current = self.get_channels()
+            new_list = [c for c in current if c.lower() != ch]
+            if len(new_list) == len(current):
+                return False
             self.cfg.cfg["channels"] = new_list
             self.cfg.cfg.pop("channel_id", None)
+            self.cfg.cfg.pop("channel_ids", None)
             self.cfg.save_config()
         return True
 
