@@ -24,6 +24,7 @@ and may change or be rate-limited — this module is written defensively for tha
 
 import json
 import re
+import threading
 import time
 
 import requests
@@ -82,7 +83,7 @@ class BinanceError(Exception):
 
 
 class BinanceAPI:
-    def __init__(self, timeout=30, retries=2, backoff=1.0, proxy=None, verbose=False):
+    def __init__(self, timeout=30, retries=3, backoff=1.0, proxy=None, verbose=False):
         self.timeout = timeout
         self.retries = retries
         self.backoff = backoff
@@ -91,8 +92,47 @@ class BinanceAPI:
         self.session.headers.update(HEADERS)
         self._colo_cache = {}  # Cache for Colosseum page data
         self.aliases = dict(CODE_ALIASES)
+        # ---- global throttle: never exceed ~4 req/s to Binance ----
+        self._rl_lock = threading.Lock()
+        self._rl_next = 0.0            # earliest allowed time for next request
+        self._rl_min_interval = 0.25   # seconds between requests
+        self._rl_penalty_until = 0.0   # back-off until (set on 429)
         if proxy:
             self.session.proxies = {"http": proxy, "https": proxy}
+
+    # ---- rate limiter ------------------------------------------------------
+    def _throttle(self):
+        """Block until the global request rate limit allows another request.
+
+        Keeps total traffic under Binance's limit even when many worker threads
+        (or the parallel AUM summation) fire at once.
+        """
+        with self._rl_lock:
+            now = time.monotonic()
+            target = max(self._rl_next, self._rl_penalty_until)
+            wait = target - now
+            if wait > 0:
+                time.sleep(wait)
+            self._rl_next = max(target, time.monotonic()) + self._rl_min_interval
+
+    def _backoff_on_429(self, attempt, resp):
+        """Sleep longer on each consecutive 429 and extend the throttle window.
+
+        Returns True if the caller should retry, False if retries exhausted.
+        """
+        penalty = min(30.0, (attempt + 1) * 2.0)
+        with self._rl_lock:
+            self._rl_penalty_until = max(self._rl_penalty_until,
+                                         time.monotonic() + penalty)
+        retry_after = resp.headers.get("Retry-After")
+        try:
+            penalty = min(30.0, float(retry_after))
+        except (TypeError, ValueError):
+            pass
+        if self.verbose:
+            print(f"[bapi] 429 rate-limited — sleeping {penalty:.0f}s")
+        time.sleep(penalty)
+        return True
 
     def set_aliases(self, mapping):
         """Merge user-defined code aliases (from config.json `code_aliases`)."""
@@ -107,14 +147,15 @@ class BinanceAPI:
         url = BAPI_HOST + path
         last_err = None
         for attempt in range(self.retries + 1):
+            self._throttle()
             try:
                 resp = self.session.post(url, data=json.dumps(body), timeout=self.timeout)
                 if resp.status_code == 429:
                     last_err = BinanceError("rate limited (429)")
-                    if self.verbose:
-                        print(f"[bapi] 429 on {path}, retry {attempt+1}")
-                    time.sleep(self.backoff * (attempt + 1))
-                    continue
+                    if attempt < self.retries:
+                        self._backoff_on_429(attempt, resp)
+                        continue
+                    break
                 resp.raise_for_status()
                 data = resp.json()
                 if data.get("success") is False or data.get("code") not in (None, "000000", "0", 0):
@@ -133,14 +174,21 @@ class BinanceAPI:
 
     def _get_json(self, url):
         for attempt in range(self.retries + 1):
+            self._throttle()
             try:
                 resp = self.session.get(url, timeout=self.timeout)
+                if resp.status_code == 429:
+                    if attempt < self.retries:
+                        self._backoff_on_429(attempt, resp)
+                        continue
+                    break
                 resp.raise_for_status()
                 return resp.json()
             except requests.RequestException as e:
                 if attempt == self.retries:
                     raise BinanceError(f"request failed: {e}")
                 time.sleep(self.backoff * (attempt + 1))
+        raise BinanceError(f"request failed: rate limited (429)")
 
     # ------------------------------------------------------------- endpoints
     def resource_single(self, code):
