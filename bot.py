@@ -1082,11 +1082,13 @@ def main():
     # enqueues commands; a worker thread executes them. This keeps the bot
     # responsive even while a slow command (e.g. /tracks) is fetching data.
     command_q = queue_mod.Queue(maxsize=500)
+    inflight = set()
+    inflight_lock = threading.Lock()
 
     def _command_worker():
         while True:
+            kind, a, b, c, key = command_q.get()
             try:
-                kind, a, b, c = command_q.get()
                 if kind == "msg":
                     handler.handle(a, b, user_id=c)
                 elif kind == "cb":
@@ -1097,11 +1099,29 @@ def main():
                 except Exception:
                     pass
             finally:
+                if key is not None:
+                    with inflight_lock:
+                        inflight.discard(key)
                 command_q.task_done()
 
-    # small pool so a few commands run in parallel (3 workers ≈ 3 commands at once)
-    for _ in range(3):
+    # worker pool sized so slow commands never starve other commands
+    for _ in range(8):
         threading.Thread(target=_command_worker, daemon=True).start()
+
+    # pre-warm slow caches (e.g. bStock AUM) in the background so /tracks N
+    # responds instantly instead of summing for minutes. Re-runs periodically
+    # so a fresh daily leaderboard never makes /tracks slow mid-day.
+    def _warm_caches():
+        while True:
+            for item in list(cfg.watchlist):
+                try:
+                    engine.refresh_tracks(item)
+                except Exception:
+                    pass
+                time.sleep(2)
+            time.sleep(1800)   # every 30 min
+
+    threading.Thread(target=_warm_caches, daemon=True).start()
 
     offset = 0
     reload_flag = os.path.join(BASE_DIR, ".reload")
@@ -1125,7 +1145,7 @@ def main():
             offset = max(offset, u["update_id"] + 1)
             cb = u.get("callback_query")
             if cb:
-                command_q.put(("cb", cb, None, None))
+                command_q.put(("cb", cb, None, None, None))
                 continue
             msg = u.get("message") or {}
             text = msg.get("text")
@@ -1138,7 +1158,18 @@ def main():
                 tg.call("sendChatAction", chat_id=chat_id, action="typing")
             except Exception:
                 pass
-            command_q.put(("msg", chat_id, text, user_id))
+            key = (chat_id, text)
+            with inflight_lock:
+                if key in inflight:
+                    continue          # same command already running — skip
+                inflight.add(key)
+            # if workers are all busy, tell the user right away
+            if command_q.qsize() > 8:
+                try:
+                    tg.send(chat_id, "⏳ Busy right now — queued, one moment…")
+                except Exception:
+                    pass
+            command_q.put(("msg", chat_id, text, user_id, key))
 
 
 def run_cli(cfg, api, arg):

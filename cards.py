@@ -711,69 +711,88 @@ _AUM_CACHE = {}   # {resource_id: {"updated": ms, "total": float, "tail": float,
 
 
 def aggregate_aum(api, resource_id, tail_start, updated_ms, state=None,
-                  page_cap=500, pause=0.03):
+                  page_cap=500, chunk=4):
     """Sum Effective Net AUM across the whole leaderboard for AUM-based tracks.
 
     Binance exposes no AUM total, so we page through and sum `grade`. Rows are
-    sorted by grade descending, so we stop at the first zero grade (everything
-    after contributes nothing). Result is cached in memory and in `state`
-    (keyed by the leaderboard updatedTime) so it's computed once per update.
+    sorted by grade descending, so we stop at the first zero grade. Pages are
+    fetched in parallel chunks to keep the total time under ~60s (cold).
+    Result is cached in memory and in `state` keyed by the leaderboard
+    updatedTime, so it's computed once per daily update.
     """
+    from concurrent.futures import ThreadPoolExecutor
+
     key = str(resource_id)
-    # in-memory cache
     hit = _AUM_CACHE.get(key)
     if hit and hit.get("updated") == updated_ms and hit.get("tail") is not None:
         return hit
-    # persistent cache
     if isinstance(state, dict):
         sc = (state.get("aum_cache") or {}).get(key)
         if sc and sc.get("updated") == updated_ms:
             _AUM_CACHE[key] = sc
             return sc
 
+    def fetch(p):
+        try:
+            return api.leaderboard_page(resource_id, page_index=p, page_size=100)
+        except Exception:
+            return None
+
     total = 0.0
     top_sum = 0.0
     cutoff = None
     users = 0
     tail_users = 0
-    pos = 0          # row position by rank order (sequence has gaps/dupes)
+    pos = 0
     complete = False
+
     try:
-        for page in range(1, page_cap + 1):
-            lb = api.leaderboard_page(resource_id, page_index=page, page_size=100)
-            if not lb:
-                complete = True
-                break
-            batch = ((lb.get("resourceSummaryList") or {}).get("data")) or []
-            if not batch:
-                complete = True
-                break
-            saw_zero = False
-            for r in batch:
-                g = r.get("grade")
-                if g is None:
-                    g = r.get("tradingVolume")
-                if g is None or float(g) <= 0:
-                    saw_zero = True
+        page = 1
+        while page <= page_cap:
+            pages = list(range(page, min(page + chunk, page_cap + 1)))
+            with ThreadPoolExecutor(max_workers=len(pages)) as ex:
+                batch = {p: ex.submit(fetch, p).result() for p in pages}
+
+            done = False
+            for p in sorted(batch):
+                lb = batch[p]
+                if not lb:
+                    complete = True
+                    done = True
                     break
-                g = float(g)
-                pos += 1
-                total += g
-                users += 1
-                if pos < tail_start:
-                    top_sum += g
-                else:
-                    tail_users += 1
-                if pos == tail_start - 1:
-                    cutoff = g
-            if saw_zero:
-                complete = True
+                data = ((lb.get("resourceSummaryList") or {}).get("data")) or []
+                if not data:
+                    complete = True
+                    done = True
+                    break
+                for r in data:
+                    g = r.get("grade")
+                    if g is None:
+                        g = r.get("tradingVolume")
+                    if g is None or float(g) <= 0:
+                        done = True
+                        complete = True
+                        break
+                    g = float(g)
+                    pos += 1
+                    total += g
+                    users += 1
+                    if pos < tail_start:
+                        top_sum += g
+                    else:
+                        tail_users += 1
+                    if pos == tail_start - 1:
+                        cutoff = g
+                if done:
+                    break
+                tr = (lb.get("resourceSummaryList") or {}).get("total") or 0
+                if p * 100 >= tr:
+                    complete = True
+                    done = True
+                    break
+            if done:
                 break
-            total_rows = (lb.get("resourceSummaryList") or {}).get("total") or 0
-            if page * 100 >= total_rows:
-                complete = True
-                break
-            time.sleep(pause)
+            page += chunk
     except Exception:
         complete = False
 
