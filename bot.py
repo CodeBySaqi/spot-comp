@@ -33,11 +33,10 @@ import traceback
 import requests
 
 from binance_api import BinanceAPI
-from cards import (build_card, build_campaigns_message, build_multi_card,
-                   build_summary_line, build_track_card, build_tracks_message,
+from cards import (build_card, build_campaigns_message, build_summary_line,
                    build_price_card, build_rewards_table_message, compute,
-                   compute_all_tracks, esc, extract_reward_date,
-                   group_rule_text_for, title_for, volume_fingerprint)
+                   esc, extract_reward_date, group_rule_text_for,
+                   volume_fingerprint)
 from campaigns import (Campaign, list_running_campaigns, colosseum_entries,
                        enrich, set_proxy, set_jina_key)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -256,27 +255,6 @@ class Engine:
                 ev = (60000, 30000, 10000, 5000, 1000)
             stats["example_volumes"] = list(ev)
         return stats
-
-    def refresh_tracks(self, item):
-        """Resolve a competition → track entries (Spot/bStock/TradFi/Futures)."""
-        group, activities = self.api.resolve_competition(item)
-        if not group:
-            return None
-        ev = self.cfg.cfg.get("example_volumes") or (60000, 30000, 10000, 5000, 1000)
-        try:
-            ev = [int(v) for v in ev]
-        except (TypeError, ValueError):
-            ev = (60000, 30000, 10000, 5000, 1000)
-        entries = compute_all_tracks(self.api, group, activities, state=self.cfg.state)
-        with self.lock:
-            self.cfg.save_state()
-        for e in entries:
-            if e["kind"] == "single":
-                e["stats"]["example_volumes"] = list(ev)
-            else:
-                for s in e["stats_list"]:
-                    s["example_volumes"] = list(ev)
-        return entries
 
     def refresh_all(self):
         out, seen = [], set()
@@ -704,8 +682,7 @@ class CommandHandler:
             self._help(chat_id)
         elif cmd in ("/comp", "/spotcomp"):
             self._comp(chat_id, arg)
-        elif cmd in ("/tracks", "/track"):
-            self._tracks(chat_id, arg)
+
         elif cmd in ("/price", "/p"):
             self._price(chat_id, arg)
         elif cmd in ("/reward", "/rewards"):
@@ -732,7 +709,7 @@ class CommandHandler:
             "<b>Binance Spot Competition bot</b>\n"
             "🤖 Auto-tracks every running campaign (no setup needed)\n"
             "/comp <i>TOKEN|code</i> — proportional-share estimator card\n"
-            "/tracks <i>TOKEN|code</i> [n] — all tracks, or 1=Spot 2=bStock 3=TradFi 4=Futures\n"
+
             "/reward — reward distribution dates table (active & ended)\n"
             "/price <i>TOKEN</i> — live price, 24h high/low & volume\n"
             "/campaigns — all running spot campaigns (with clickable buttons)\n"
@@ -785,71 +762,7 @@ class CommandHandler:
                                 "Try the exact competition code from the Binance URL:\n"
                                 "binance.com/en/activity/trading-competition/<code>")
             return
-        with self.engine.lock:
-            self.engine.cfg.state["last_track_code"] = arg
-            self.engine.cfg.save_state()
         self.engine.tg.send(chat_id, build_card(stats))
-
-    def _tracks(self, chat_id, arg):
-        # /tracks             → summary + every track card (last-used competition)
-        # /tracks <code>      → summary + every track card of <code>
-        # /tracks <code> <n>  → ONLY track #n (1=Spot, 2=bStock, 3=TradFi, 4=Futures)
-        # /tracks <n>         → ONLY track #n of the last-used competition
-        parts = (arg or "").split()
-        code = None
-        n = None
-        for p in parts:
-            if p.isdigit():
-                n = int(p)
-            elif code is None:
-                code = p
-        if not code:
-            code = self.engine.cfg.state.get("last_track_code")
-        if not code:
-            self.engine.tg.send(chat_id,
-                "Usage: /tracks <i>CODE</i> [<i>n</i>]\n"
-                "e.g. /tracks tl4 (all) · /tracks 1 (Spot) · /tracks tl4 3 (TradFi)")
-            return
-        with self.engine.lock:
-            self.engine.cfg.state["last_track_code"] = code
-            self.engine.cfg.save_state()
-        self.engine.tg.send(chat_id, f"⏳ Fetching tracks for <b>{esc(code)}</b> …")
-        try:
-            entries = self.engine.refresh_tracks(code)
-        except Exception as e:
-            self.engine.tg.send(chat_id, f"❌ Error: {esc(e)}")
-            return
-        if not entries:
-            self.engine.tg.send(chat_id,
-                                f"❌ No competition found for <b>{esc(code)}</b>.\n"
-                                "Try the exact competition code from the Binance URL.")
-            return
-
-        # single-track request → show just that one card
-        if n is not None and n >= 1:
-            if n > len(entries):
-                self.engine.tg.send(chat_id,
-                                    f"❌ <b>{esc(code)}</b> has only {len(entries)} tracks "
-                                    f"(1..{len(entries)}). You asked for #{n}.")
-                return
-            e = entries[n - 1]
-            if e["kind"] == "single":
-                self.engine.tg.send(chat_id, build_track_card(e["stats"]))
-            else:
-                self.engine.tg.send(chat_id,
-                                    build_multi_card(title_for(e["stats_list"][0]),
-                                                     e["stats_list"]))
-            return
-
-        # full overview
-        self.engine.tg.send(chat_id, build_tracks_message(entries))
-        for e in entries:
-            if e["kind"] == "single":
-                self.engine.tg.send(chat_id, build_track_card(e["stats"]))
-            else:
-                self.engine.tg.send(chat_id,
-                                    build_multi_card(title_for(e["stats_list"][0]),
-                                                     e["stats_list"]))
 
     def _campaigns(self, chat_id, arg=""):
         if arg:
@@ -1080,7 +993,7 @@ def main():
 
     # Non-blocking command handling: the main loop ONLY polls Telegram and
     # enqueues commands; a worker thread executes them. This keeps the bot
-    # responsive even while a slow command (e.g. /tracks) is fetching data.
+    # responsive even while a slow command is fetching data.
     command_q = queue_mod.Queue(maxsize=500)
     inflight = set()
     inflight_lock = threading.Lock()
@@ -1108,22 +1021,6 @@ def main():
     for _ in range(8):
         threading.Thread(target=_command_worker, daemon=True).start()
 
-    # pre-warm slow caches (e.g. bStock AUM) in the background so /tracks N
-    # responds instantly instead of summing for minutes. Re-runs periodically
-    # so a fresh daily leaderboard never makes /tracks slow mid-day.
-    def _warm_caches():
-        # start late so the first poll + refresh cycle aren't competing
-        time.sleep(120)
-        while True:
-            for item in list(cfg.watchlist):
-                try:
-                    engine.refresh_tracks(item)
-                except Exception:
-                    pass
-                time.sleep(3)
-            time.sleep(1800)   # every 30 min
-
-    threading.Thread(target=_warm_caches, daemon=True).start()
 
     offset = 0
     reload_flag = os.path.join(BASE_DIR, ".reload")
