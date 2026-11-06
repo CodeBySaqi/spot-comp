@@ -114,6 +114,18 @@ python bot.py --cli            # whole watchlist
 
 ---
 
+## Tests
+
+Offline unit tests for the card math and formatting (`cards.py`):
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q
+```
+
+The Binance API is faked in the tests (no network, no Telegram), so they run
+anywhere with just pytest installed.
+
 ## Commands
 
 | Command | Effect |
