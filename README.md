@@ -116,7 +116,8 @@ python bot.py --cli            # whole watchlist
 
 ## Tests
 
-Offline unit tests for the card math and formatting (`cards.py`):
+Offline unit tests for the card math and formatting (`cards.py`), plus
+Data Structures & Algorithms solutions in `dsa/` (ARIN-1108 course work):
 
 ```bash
 pip install -r requirements-dev.txt
