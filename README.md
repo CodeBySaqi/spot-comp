@@ -119,6 +119,10 @@ python bot.py --cli            # whole watchlist
 Offline unit tests for the card math and formatting (`cards.py`), plus
 Data Structures & Algorithms solutions in `dsa/` (ARIN-1108 course work):
 
+- `union_find.py` — disjoint-set union with path compression
+- `dijkstra.py` — Dijkstra's shortest path with reconstruction
+- `traversal.py` — BFS and DFS graph traversal, BFS shortest path
+
 ```bash
 pip install -r requirements-dev.txt
 python -m pytest tests -q
