@@ -122,6 +122,7 @@ Data Structures & Algorithms solutions in `dsa/` (ARIN-1108 course work):
 - `union_find.py` — disjoint-set union with path compression
 - `dijkstra.py` — Dijkstra's shortest path with reconstruction
 - `traversal.py` — BFS and DFS graph traversal, BFS shortest path
+- `kruskal.py` — Kruskal's minimum spanning tree (forest) on Union-Find
 
 ```bash
 pip install -r requirements-dev.txt
