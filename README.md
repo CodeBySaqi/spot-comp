@@ -124,6 +124,7 @@ Data Structures & Algorithms solutions in `dsa/` (ARIN-1108 course work):
 - `traversal.py` — BFS and DFS graph traversal, BFS shortest path
 - `kruskal.py` — Kruskal's minimum spanning tree (forest) on Union-Find
 - `prim.py` — Prim's minimum spanning tree (forest) with a heap; same input/output shape as Kruskal's, so the two totals cross-check
+- `bellman_ford.py` — Bellman-Ford shortest path with negative weights and negative-cycle detection; same input/output shape as Dijkstra's, so the two cross-check
 
 ```bash
 pip install -r requirements-dev.txt
