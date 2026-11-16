@@ -127,6 +127,7 @@ Data Structures & Algorithms solutions in `dsa/` (ARIN-1108 course work):
 - `bellman_ford.py` — Bellman-Ford shortest path with negative weights and negative-cycle detection; same input/output shape as Dijkstra's, so the two cross-check
 - `floyd_warshall.py` — Floyd-Warshall all-pairs shortest paths with path reconstruction; handles negative weights and raises on negative cycles, cross-checked against Dijkstra and Bellman-Ford
 - `topological_sort.py` — Topological sort (Kahn's algorithm) for directed acyclic graphs with cycle detection; every node named as a key or only as a neighbour appears exactly once
+- `strongly_connected.py` — Strongly connected components (Kosaraju's algorithm) in O(V + E); every node appears exactly once, cross-checked against brute-force reachability
 
 ```bash
 pip install -r requirements-dev.txt
