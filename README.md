@@ -131,6 +131,7 @@ Data Structures & Algorithms solutions in `dsa/` (ARIN-1108 course work):
 - `astar.py` — A* search with an admissible heuristic (zero heuristic falls back to Dijkstra's); path and cost, cross-checked against Dijkstra on 30 random graphs
 - `knapsack.py` — 0/1 knapsack (dynamic programming) with optimal item reconstruction; max value and chosen items, cross-checked against brute force on 40 random instances
 - `kmp.py` — Knuth-Morris-Pratt string search in O(n + m); every occurrence including overlaps, cross-checked against a naive scan on 90 random texts
+- `lcs.py` — Longest common subsequence (dynamic programming) in O(m * n); length plus one reconstructed subsequence, cross-checked against brute force on 40 random strings
 
 ```bash
 pip install -r requirements-dev.txt
