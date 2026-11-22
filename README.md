@@ -132,6 +132,7 @@ Data Structures & Algorithms solutions in `dsa/` (ARIN-1108 course work):
 - `knapsack.py` — 0/1 knapsack (dynamic programming) with optimal item reconstruction; max value and chosen items, cross-checked against brute force on 40 random instances
 - `kmp.py` — Knuth-Morris-Pratt string search in O(n + m); every occurrence including overlaps, cross-checked against a naive scan on 90 random texts
 - `lcs.py` — Longest common subsequence (dynamic programming) in O(m * n); length plus one reconstructed subsequence, cross-checked against brute force on 40 random strings
+- `edit_distance.py` — Edit distance / Levenshtein distance (dynamic programming) in O(m * n); minimum edits plus one cheapest edit script, cross-checked against brute force on 30 random strings
 
 ```bash
 pip install -r requirements-dev.txt
