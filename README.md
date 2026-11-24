@@ -134,6 +134,7 @@ Data Structures & Algorithms solutions in `dsa/` (ARIN-1108 course work):
 - `lcs.py` — Longest common subsequence (dynamic programming) in O(m * n); length plus one reconstructed subsequence, cross-checked against brute force on 40 random strings
 - `edit_distance.py` — Edit distance / Levenshtein distance (dynamic programming) in O(m * n); minimum edits plus one cheapest edit script, cross-checked against brute force on 30 random strings
 - `lis.py` — Longest increasing subsequence (patience sorting) in O(n log n); length plus one reconstructed subsequence, cross-checked against brute force on 40 random sequences
+- `graph_coloring.py` — Graph colouring (greedy Welsh-Powell + exact chromatic number via backtracking); greedy valid within Δ + 1, exact cross-checked against brute force on 30 random graphs
 
 ```bash
 pip install -r requirements-dev.txt
